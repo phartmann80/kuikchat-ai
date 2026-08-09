@@ -86,7 +86,7 @@ const Chat = () => {
               {selectedContact ? (
                 <ChatWindow
                   contact={selectedContact}
-                  chatId={selectedContact.chat_id || selectedContact.id}
+                  chatId={selectedContact.chat_id ?? null}
                   onBack={() => setIsMobileContactsOpen(true)}
                   wallpaper={chatWallpaper}
                   onWallpaperChange={setChatWallpaper}

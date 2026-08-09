@@ -167,7 +167,7 @@ export const ContactList = ({ contacts, selectedContact, onSelectContact, loadin
         ) : (
           filteredContacts.map((contact) => (
             <button
-              key={`${contact.chat_id || contact.id}-${contact.user_id}`}
+              key={`${contact.chat_id || "pending"}-${contact.user_id}`}
               type="button"
               onClick={() => resolveAndSelectContact(contact)}
               className={`flex w-full items-center gap-3 rounded-2xl p-3 text-left text-slate-100 transition-colors ${

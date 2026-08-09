@@ -44,7 +44,6 @@ import { EventCreator, CalendarEvent } from "./EventCreator";
 import { DocumentScanner } from "./DocumentScanner";
 import { QRCodeScanner } from "./QRCodeScanner";
 import { VerifiedBadge, VerificationType } from "./VerifiedBadge";
-import { EncryptionBanner, EncryptionIndicator } from "./EncryptionBanner";
 import { DisappearingMessagesSettings, DisappearingMessageIndicator, DisappearingDuration } from "./DisappearingMessagesSettings";
 import { ScreenshotAlert } from "./ScreenshotAlert";
 import { MessageContextMenu } from "./MessageContextMenu";
@@ -56,6 +55,7 @@ import { MultimodalAICall } from "./MultimodalAICall";
 import { useToast } from "@/hooks/use-toast";
 import { EmojiPicker } from "./EmojiPicker";
 import { cn } from "@/lib/utils";
+import { resolveChatIdForMessaging } from "@/lib/resolveChatId";
 
 export interface ChatContact {
   id: string;
@@ -103,7 +103,6 @@ export const ChatWindow = ({ chatId, contact, onBack, wallpaper = "transparent",
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [disappearingDuration, setDisappearingDuration] = useState<DisappearingDuration>("off");
-  const [showEncryptionBanner, setShowEncryptionBanner] = useState(true);
   const [showScheduleDialog, setShowScheduleDialog] = useState(false);
   const [replyingTo, setReplyingTo] = useState<{ id: string; content: string; sender: string } | null>(null);
   const [showAskAI, setShowAskAI] = useState(false);
@@ -111,7 +110,7 @@ export const ChatWindow = ({ chatId, contact, onBack, wallpaper = "transparent",
   const [showAICall, setShowAICall] = useState(false);
   const [longPressTimer, setLongPressTimer] = useState<NodeJS.Timeout | null>(null);
   const [voiceNotes, setVoiceNotes] = useState<Record<string, { url: string; duration: number }>>({});
-  const resolvedChatId = chatId || contact.chat_id || contact.id;
+  const resolvedChatId = resolveChatIdForMessaging(chatId, contact.chat_id);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const { user } = useAuth();
@@ -133,6 +132,14 @@ export const ChatWindow = ({ chatId, contact, onBack, wallpaper = "transparent",
 
   const handleSend = async () => {
     if (!messageText.trim()) return;
+    if (!resolvedChatId) {
+      toast({
+        title: "Chat unavailable",
+        description: "Could not resolve this conversation. Please reopen the chat and try again.",
+        variant: "destructive",
+      });
+      return;
+    }
     await sendMessage(messageText);
     setMessageText("");
     setShowAttachments(false);
@@ -329,7 +336,6 @@ ${imageUrl}`);
               <p className="text-xs text-slate-400">
                 {contact.online ? "Online" : "Last seen recently"}
               </p>
-              <EncryptionBanner contactName={contact.name} />
               {disappearingDuration !== "off" && (
                 <DisappearingMessageIndicator duration={disappearingDuration} />
               )}
@@ -378,13 +384,15 @@ ${imageUrl}`);
         </div>
       </div>
 
-      {/* Encryption Banner */}
-      {showEncryptionBanner && (
-        <EncryptionBanner contactName={contact.name} />
-      )}
-
       {/* Screenshot Alert */}
-      <ScreenshotAlert chatId={resolvedChatId} contactName={contact.name} />
+      {resolvedChatId && (
+        <ScreenshotAlert chatId={resolvedChatId} contactName={contact.name} />
+      )}
+      {!resolvedChatId && (
+        <div className="mx-4 mb-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+          Conversation is not ready. Reopen this chat to resolve a secure chat ID before sending.
+        </div>
+      )}
 
       {/* Messages */}
       <div
