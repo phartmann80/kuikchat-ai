@@ -45,7 +45,7 @@ import { DocumentScanner } from "./DocumentScanner";
 import { QRCodeScanner } from "./QRCodeScanner";
 import { VerifiedBadge, VerificationType } from "./VerifiedBadge";
 import { EncryptionBanner, EncryptionIndicator } from "./EncryptionBanner";
-import { DisappearingMessagesSettings, DisappearingDuration } from "./DisappearingMessagesSettings";
+import { DisappearingMessagesSettings, DisappearingMessageIndicator, DisappearingDuration } from "./DisappearingMessagesSettings";
 import { ScreenshotAlert } from "./ScreenshotAlert";
 import { MessageContextMenu } from "./MessageContextMenu";
 import { ScheduleMessageDialog, RepeatType } from "./ScheduleMessageDialog";
@@ -329,7 +329,7 @@ ${imageUrl}`);
               <p className="text-xs text-slate-400">
                 {contact.online ? "Online" : "Last seen recently"}
               </p>
-              <EncryptionBanner />
+              <EncryptionBanner contactName={contact.name} />
               {disappearingDuration !== "off" && (
                 <DisappearingMessageIndicator duration={disappearingDuration} />
               )}

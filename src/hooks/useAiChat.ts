@@ -123,7 +123,11 @@ export const useAiChat = (): UseAiChatReturn => {
 
       if (fetchError) throw fetchError;
 
-      setMessages(data || []);
+      const history: ChatMessage[] = (data || []).map((row) => ({
+        role: row.role as ChatRole,
+        content: row.content,
+      }));
+      setMessages(history);
       setConversationId(id);
     } catch (err: any) {
       setError(err.message || "Failed to load conversation history.");
