@@ -27,6 +27,7 @@ import { Switch } from "@/components/ui/switch";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useProfile } from "@/hooks/useProfile";
+import { buildBusinessProfileUpsert } from "@/lib/businessProfileSave";
 import { toast } from "sonner";
 
 interface BusinessWizardProps {
@@ -201,9 +202,9 @@ export const BusinessWizard = ({ open, onOpenChange }: BusinessWizardProps) => {
     if (!user) return;
     setLoading(true);
 
-    const businessData = {
-      user_id: user.id,
-      company_name: companyName || "My Business",
+    const businessData = buildBusinessProfileUpsert({
+      userId: user.id,
+      companyName,
       categories: selectedCategories,
       hours: {
         mode: hoursMode,
@@ -214,28 +215,16 @@ export const BusinessWizard = ({ open, onOpenChange }: BusinessWizardProps) => {
       email,
       phone,
       address,
-      logo_url: avatarUrl,
-    };
+      logoUrl: avatarUrl,
+    });
 
     try {
-      // 1. Upsert business profile
+      // Upsert business profile only — never overwrite personal identity fields.
       const { error: upsertError } = await supabase
         .from("business_profiles")
         .upsert(businessData);
 
       if (upsertError) throw upsertError;
-
-      // 2. Also sync to the canonical user profile for consistency
-      const { error: profileSyncError } = await supabase
-        .from("profiles")
-        .update({
-          display_name: companyName,
-          bio: description,
-          avatar_url: avatarUrl,
-        })
-        .eq("id", user.id);
-
-      if (profileSyncError) throw profileSyncError;
 
       toast.success("Business profile saved successfully!");
       refetchUserProfile();
