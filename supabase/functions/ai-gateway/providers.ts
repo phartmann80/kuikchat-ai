@@ -14,6 +14,19 @@ export interface FailoverConfig {
   maxOutputTokens: number;
   timeoutMs: number;
   fetcher?: typeof fetch;
+  /** Correlation ID for privacy-safe operational warnings (no prompts/keys/PII). */
+  correlationId?: string;
+  /** Optional sink for structured failover warnings (defaults to console.warn). */
+  warn?: (payload: FailoverWarning) => void;
+}
+
+export interface FailoverWarning {
+  event: "AI_PROVIDER_FAILOVER";
+  provider: "langdock";
+  code: string;
+  fallback_provider: "openrouter";
+  timestamp: string;
+  correlation_id: string | null;
 }
 
 interface ProviderResponse {
@@ -39,6 +52,9 @@ export class ProviderRequestError extends Error {
   }
 }
 
+/** Errors that must not trigger OpenRouter failover. */
+const NON_FAILOVER_CODES = new Set(["EMPTY_RESPONSE"]);
+
 function normalizeUsage(response: ProviderResponse): TokenUsage {
   return {
     input: typeof response.usage?.prompt_tokens === "number"
@@ -48,6 +64,21 @@ function normalizeUsage(response: ProviderResponse): TokenUsage {
       ? response.usage.completion_tokens
       : null,
   };
+}
+
+export function emitFailoverWarning(
+  code: string,
+  correlationId: string | null | undefined,
+  warn: (payload: FailoverWarning) => void = console.warn,
+): void {
+  warn({
+    event: "AI_PROVIDER_FAILOVER",
+    provider: "langdock",
+    code,
+    fallback_provider: "openrouter",
+    timestamp: new Date().toISOString(),
+    correlation_id: correlationId ?? null,
+  });
 }
 
 export async function requestProvider(
@@ -93,7 +124,7 @@ export async function requestProvider(
       if (response.status === 401 || response.status === 403) code = "PROVIDER_AUTH_ERROR";
       else if (response.status === 429) code = "PROVIDER_RATE_LIMITED";
       else if (response.status >= 500) code = "PROVIDER_UNAVAILABLE";
-      
+
       throw new ProviderRequestError(provider.name, code);
     }
 
@@ -140,17 +171,19 @@ export async function runWithFailover(
       return { ...result, fallbackUsed: false, fallbackReason: null };
     } catch (error) {
       if (error instanceof ProviderRequestError) {
-        const criticalErrors = ["PROVIDER_AUTH_ERROR", "EMPTY_RESPONSE"];
-        if (criticalErrors.includes(error.code)) {
-          throw error; 
+        if (NON_FAILOVER_CODES.has(error.code)) {
+          throw error;
         }
         fallbackReason = error.code;
+        emitFailoverWarning(error.code, config.correlationId, config.warn);
       } else {
         fallbackReason = "LANGDOCK_UNKNOWN_ERROR";
+        emitFailoverWarning(fallbackReason, config.correlationId, config.warn);
       }
     }
   } else {
     fallbackReason = "LANGDOCK_DISABLED";
+    emitFailoverWarning(fallbackReason, config.correlationId, config.warn);
   }
 
   try {
@@ -164,7 +197,7 @@ export async function runWithFailover(
     return { ...result, fallbackUsed: true, fallbackReason };
   } catch (error) {
     if (error instanceof ProviderRequestError) {
-      throw error; 
+      throw error;
     }
     throw error;
   }

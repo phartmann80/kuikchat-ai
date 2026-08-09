@@ -88,14 +88,11 @@ serve(async (req) => {
     const langdockKey = requiredEnv("LANGDOCK_API_KEY");
     const langdockModel = requiredEnv("LANGDOCK_MODEL");
     const langdockDisabled = Deno.env.get("AI_LANGDOCK_DISABLED") === "true";
-
-    let openrouterConfig = undefined;
-    if (!langdockDisabled) {
-      openrouterConfig = {
-        apiKey: requiredEnv("OPENROUTER_API_KEY"),
-        model: requiredEnv("OPENROUTER_MODEL"),
-      };
-    }
+    // OpenRouter is always required so Langdock auth/unavailable failures can fail over.
+    const openrouterConfig = {
+      apiKey: requiredEnv("OPENROUTER_API_KEY"),
+      model: requiredEnv("OPENROUTER_MODEL"),
+    };
 
     const body = await req.json().catch(() => { throw new RequestValidationError("Invalid JSON"); });
     const gatewayRequest = parseGatewayRequest(body);
@@ -158,10 +155,15 @@ serve(async (req) => {
 
     const result = await runWithFailover(gatewayRequest.messages, {
       langdock: { name: "langdock", endpoint: "https://api.langdock.com/openai/eu/v1/chat/completions", apiKey: langdockKey, model: langdockModel },
-      openrouter: { name: "openrouter", endpoint: "https://openrouter.ai/api/v1/chat/completions", apiKey: openrouterConfig!.apiKey, model: openrouterConfig!.model },
+      openrouter: { name: "openrouter", endpoint: "https://openrouter.ai/api/v1/chat/completions", apiKey: openrouterConfig.apiKey, model: openrouterConfig.model },
       langdockDisabled,
       maxOutputTokens: AI_LIMITS.maxOutputTokens,
       timeoutMs: AI_LIMITS.providerTimeoutMs,
+      correlationId: requestId,
+      warn: (payload) => {
+        // Privacy-safe operational signal only (provider/code/correlation). No keys, prompts, or PII.
+        console.warn("[AI-PROVIDER-FAILOVER]", JSON.stringify(payload));
+      },
     });
 
     const { error: assistantInsertError } = await authClient
@@ -185,13 +187,18 @@ serve(async (req) => {
     });
 
   } catch (error: any) {
-    console.error(`[AI-GATEWAY-ERROR] ID: ${requestId} | ${error.message}`);
+    if (error instanceof ProviderRequestError) {
+      // Privacy-safe: provider name + normalized code only. No keys, prompts, or response bodies.
+      console.error(`[AI-GATEWAY-ERROR] ID: ${requestId} | provider=${error.provider} code=${error.code}`);
+    } else {
+      console.error(`[AI-GATEWAY-ERROR] ID: ${requestId} | ${error?.name || "Error"}`);
+    }
 
-    if (error.message.includes("MISSING_CONFIG")) {
-      return jsonResponse(req, { error: { code: "SERVER_CONFIG_ERROR", message: "Internal configuration error." } }, 500);
+    if (typeof error?.message === "string" && error.message.includes("MISSING_CONFIG")) {
+      return jsonResponse(req, { error: { code: "SERVER_CONFIG_ERROR", message: "Internal configuration error.", request_id: requestId } }, 500);
     }
     if (error instanceof RequestValidationError) {
-      return jsonResponse(req, { error: { code: "INVALID_REQUEST", message: error.message } }, 400);
+      return jsonResponse(req, { error: { code: "INVALID_REQUEST", message: error.message, request_id: requestId } }, 400);
     }
     if (error instanceof ProviderRequestError) {
       const mapping: Record<string, string> = {
@@ -199,9 +206,9 @@ serve(async (req) => {
         "PROVIDER_RATE_LIMITED": "RATE_LIMITED",
         "PROVIDER_UNAVAILABLE": "PROVIDER_UNAVAILABLE",
       };
-      return jsonResponse(req, { error: { code: mapping[error.code] || "PROVIDER_UNAVAILABLE", message: "AI service error." } }, 503);
+      return jsonResponse(req, { error: { code: mapping[error.code] || "PROVIDER_UNAVAILABLE", message: "AI service error.", request_id: requestId } }, 503);
     }
 
-    return jsonResponse(req, { error: { code: "SERVER_ERROR", message: "An unexpected error occurred." } }, 500);
+    return jsonResponse(req, { error: { code: "SERVER_ERROR", message: "An unexpected error occurred.", request_id: requestId } }, 500);
   }
 });
