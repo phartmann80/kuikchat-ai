@@ -185,7 +185,6 @@ export const BusinessToolsHub = () => {
           {/* Footer note */}
           <p className="text-xs text-muted-foreground/50 text-center mt-6 px-6 leading-relaxed">
             KuikChat Business features are coming soon.
-            {"\n"}All messaging is end-to-end encrypted.
           </p>
         </div>
       </ScrollArea>

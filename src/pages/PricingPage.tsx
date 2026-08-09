@@ -8,7 +8,7 @@ const PricingPage = () => {
             name: "Personal",
             price: "$0",
             description: "Perfect for individuals and small groups.",
-            features: ["E2E Encryption", "AI Assistant (Limited)", "3 Devices Sync", "5GB Cloud Storage"],
+            features: ["Secure account access", "AI Assistant (Limited)", "3 Devices Sync", "5GB Cloud Storage"],
             cta: "Get Started",
             highlight: false
         },

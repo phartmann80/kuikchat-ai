@@ -43,8 +43,8 @@ export const VanishModeView = () => {
           <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/30">
             <Shield className="w-5 h-5 text-primary mt-0.5" />
             <div>
-              <p className="font-medium text-sm">End-to-end encrypted</p>
-              <p className="text-xs text-muted-foreground">Messages are secured and private</p>
+              <p className="font-medium text-sm">Member-only access</p>
+              <p className="text-xs text-muted-foreground">Only conversation members can read these messages in-app</p>
             </div>
           </div>
 

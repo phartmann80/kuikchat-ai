@@ -5,7 +5,7 @@ const SecurityPage = () => {
     return (
         <StaticLayout
             title="Security & Privacy"
-            subtitle="Your data is your business. We keep it that way with end-to-end encryption."
+            subtitle="Your data is your business. We protect accounts with authentication and access controls."
         >
             <Privacy />
             <div className="mt-12 space-y-6">

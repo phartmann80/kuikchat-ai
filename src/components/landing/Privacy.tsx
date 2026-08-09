@@ -4,8 +4,8 @@ import { Shield, Lock, Eye, UserCheck, Server, FileKey } from "lucide-react";
 const privacyFeatures = [
   {
     icon: Lock,
-    title: "End-to-End Encryption",
-    description: "Every message, call, and file is encrypted from sender to receiver. Not even we can read your messages.",
+    title: "Authenticated access",
+    description: "Conversations are protected by account authentication and database access controls for members only.",
   },
   {
     icon: Eye,
@@ -24,13 +24,13 @@ const privacyFeatures = [
   },
   {
     icon: FileKey,
-    title: "Local Key Storage",
-    description: "Your encryption keys stay on your device. Full control, maximum security.",
+    title: "Honest security wording",
+    description: "We do not claim end-to-end encryption for message bodies until a verified E2E design ships.",
   },
   {
     icon: Shield,
-    title: "Open Source Protocol",
-    description: "Our encryption protocol is open source and regularly audited by security experts.",
+    title: "Row-level protections",
+    description: "Server-side policies restrict who can read and write chat data through the product APIs.",
   },
 ];
 

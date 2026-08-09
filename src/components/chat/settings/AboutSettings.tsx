@@ -55,7 +55,7 @@ export const AboutSettings = ({ onBack }: AboutSettingsProps) => {
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li className="flex items-start gap-2">
                 <span className="text-primary">•</span>
-                End-to-end encryption for all messages
+                Authenticated messaging with member-only access controls
               </li>
               <li className="flex items-start gap-2">
                 <span className="text-primary">•</span>

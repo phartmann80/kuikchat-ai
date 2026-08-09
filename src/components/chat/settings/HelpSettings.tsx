@@ -19,7 +19,7 @@ const faqItems = [
   },
   {
     question: "Are my messages encrypted?",
-    answer: "Yes! All messages on KuikChat are protected with end-to-end encryption. This means only you and the person you're communicating with can read your messages."
+    answer: "KuikChat protects accounts with authentication and database access controls. Message content is not end-to-end encrypted today, so do not treat chats as unreadably private from the service."
   },
   {
     question: "How do I create a group?",
