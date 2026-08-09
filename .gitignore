@@ -17,6 +17,9 @@ dist-ssr
 .vercel
 *.tsbuildinfo
 
+# Local nested Cursor/Kilo worktrees (do not treat as app source)
+.kilo/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
