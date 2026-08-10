@@ -4,11 +4,15 @@ export const AI_LIMITS = {
   maxMessages: 20,
   maxCharacters: 12_000,
   maxCharactersPerMessage: 4_000,
+  maxDraftCharacters: 4_000,
   maxOutputTokens: 800,
   providerTimeoutMs: 30_000,
   requestsPerHour: 30,
   requestsPerDay: 100,
 } as const;
+
+export const DRAFT_SYSTEM_INSTRUCTION =
+  "You help the user draft a message. Use only the description they provide. Do not claim to read their chat, contacts, or attachments. Return only the draft message text.";
 
 export class RequestValidationError extends Error {
   constructor(message: string) {
@@ -26,15 +30,27 @@ function isChatMessage(value: unknown): value is ChatMessage {
   );
 }
 
-export function parseGatewayRequest(value: unknown): GatewayRequest {
-  if (!value || typeof value !== "object") {
-    throw new RequestValidationError("Request body must be an object.");
+function assertNoChatContextFields(body: Record<string, unknown>, operation: string): void {
+  const forbidden = [
+    "chat_id",
+    "contact_id",
+    "contact",
+    "attachments",
+    "selected_text",
+    "system",
+    "instructions",
+  ];
+  for (const key of forbidden) {
+    if (key in body && body[key] != null) {
+      throw new RequestValidationError(
+        `Field "${key}" is not allowed for ${operation} requests.`,
+      );
+    }
   }
+}
 
-  const body = value as Record<string, unknown>;
-  if (body.operation !== "chat") {
-    throw new RequestValidationError("Only the chat operation is available.");
-  }
+function parseChatRequest(body: Record<string, unknown>): GatewayRequest {
+  assertNoChatContextFields(body, "chat");
 
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
     throw new RequestValidationError("At least one message is required.");
@@ -81,7 +97,53 @@ export function parseGatewayRequest(value: unknown): GatewayRequest {
     );
   }
 
-  const conversation_id = typeof body.conversation_id === "string" ? body.conversation_id : undefined;
+  const conversation_id = typeof body.conversation_id === "string"
+    ? body.conversation_id
+    : undefined;
 
   return { operation: "chat", conversation_id, messages };
+}
+
+function parseDraftRequest(body: Record<string, unknown>): GatewayRequest {
+  assertNoChatContextFields(body, "draft");
+
+  // Reject any attempt to turn draft into persisted chat.
+  if ("conversation_id" in body && body.conversation_id != null) {
+    throw new RequestValidationError(
+      "conversation_id is not allowed for draft requests.",
+    );
+  }
+  if ("messages" in body && body.messages != null) {
+    throw new RequestValidationError(
+      "messages is not allowed for draft requests. Use prompt.",
+    );
+  }
+
+  if (typeof body.prompt !== "string") {
+    throw new RequestValidationError("A draft prompt string is required.");
+  }
+
+  const prompt = body.prompt.trim();
+  if (!prompt) {
+    throw new RequestValidationError("Draft prompt cannot be empty.");
+  }
+  if (prompt.length > AI_LIMITS.maxDraftCharacters) {
+    throw new RequestValidationError(
+      `Draft prompt is limited to ${AI_LIMITS.maxDraftCharacters} characters.`,
+    );
+  }
+
+  return { operation: "draft", prompt };
+}
+
+export function parseGatewayRequest(value: unknown): GatewayRequest {
+  if (!value || typeof value !== "object") {
+    throw new RequestValidationError("Request body must be an object.");
+  }
+
+  const body = value as Record<string, unknown>;
+  if (body.operation === "chat") return parseChatRequest(body);
+  if (body.operation === "draft") return parseDraftRequest(body);
+
+  throw new RequestValidationError("Only chat and draft operations are available.");
 }

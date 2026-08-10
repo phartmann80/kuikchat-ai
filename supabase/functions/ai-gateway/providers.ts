@@ -17,6 +17,8 @@ export interface ProviderRunConfig {
   langdockDisabled?: boolean;
   /** When true and Logicc is configured, use Logicc after Langdock failure (except EMPTY_RESPONSE). */
   enableLogiccFallback?: boolean;
+  /** Server-defined system instruction only — never taken from the client body. */
+  systemInstruction?: string;
   maxOutputTokens: number;
   timeoutMs: number;
   fetcher?: typeof fetch;
@@ -108,12 +110,16 @@ export function emitFailoverWarning(
   );
 }
 
+const DEFAULT_SYSTEM_INSTRUCTION =
+  "You are KuikChat AI. Give a helpful, accurate, concise answer. Do not claim to perform actions you did not perform.";
+
 export async function requestProvider(
   provider: ProviderConfig,
   messages: ChatMessage[],
   maxOutputTokens: number,
   timeoutMs: number,
   fetcher: typeof fetch,
+  systemInstruction: string = DEFAULT_SYSTEM_INSTRUCTION,
 ): Promise<Omit<ProviderResult, "fallbackUsed" | "fallbackReason">> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -131,8 +137,7 @@ export async function requestProvider(
         messages: [
           {
             role: "system",
-            content:
-              "You are KuikChat AI. Give a helpful, accurate, concise answer. Do not claim to perform actions you did not perform.",
+            content: systemInstruction,
           },
           ...messages,
         ],
@@ -190,6 +195,8 @@ export async function runWithFailover(
   );
   let fallbackReason: string | null = null;
 
+  const systemInstruction = config.systemInstruction ?? DEFAULT_SYSTEM_INSTRUCTION;
+
   if (!config.langdockDisabled) {
     try {
       const result = await requestProvider(
@@ -198,6 +205,7 @@ export async function runWithFailover(
         config.maxOutputTokens,
         config.timeoutMs,
         fetcher,
+        systemInstruction,
       );
       return { ...result, fallbackUsed: false, fallbackReason: null };
     } catch (error) {
@@ -266,6 +274,7 @@ export async function runWithFailover(
     config.maxOutputTokens,
     config.timeoutMs,
     fetcher,
+    systemInstruction,
   );
   return { ...result, fallbackUsed: true, fallbackReason };
 }

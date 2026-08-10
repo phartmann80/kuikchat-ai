@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.89.0";
 import {
   AI_LIMITS,
+  DRAFT_SYSTEM_INSTRUCTION,
   parseGatewayRequest,
   RequestValidationError,
 } from "./guardrails.ts";
@@ -61,7 +62,6 @@ serve(async (req) => {
   if (req.method !== "POST") return jsonResponse(req, { error: { code: "METHOD_NOT_ALLOWED" } }, 405);
 
   const requestId = crypto.randomUUID();
-  let userId: string | null = null;
 
   try {
     const supabaseUrl = requiredEnv("SUPABASE_URL");
@@ -80,34 +80,80 @@ serve(async (req) => {
     });
     const { data: { user }, error: authError } = await authClient.auth.getUser(token);
     if (authError || !user) {
-      console.error("[AUTH-FAILURE]", authError);
+      console.error("[AUTH-FAILURE]", authError?.name || "invalid_session");
       return jsonResponse(req, { error: { code: "UNAUTHORIZED", message: "Invalid session." } }, 401);
     }
-    userId = user.id;
 
     const langdockKey = requiredEnv("LANGDOCK_API_KEY");
     const langdockModel = requiredEnv("LANGDOCK_MODEL");
     const langdockDisabled = Deno.env.get("AI_LANGDOCK_DISABLED") === "true";
-    // Approved text providers: Langdock (live) and Logicc (optional, disabled until configured).
-    // Logicc is not required for gateway boot and is not enabled in production routing yet.
     const logiccKey = Deno.env.get("LOGICC_API_KEY")?.trim() || "";
     const logiccEndpoint = Deno.env.get("LOGICC_ENDPOINT_URL")?.trim() || "";
     const logiccModel = Deno.env.get("LOGICC_MODEL")?.trim() || "";
     const enableLogiccFallback = Deno.env.get("AI_LOGICC_FALLBACK_ENABLED") === "true";
 
-    const body = await req.json().catch(() => { throw new RequestValidationError("Invalid JSON"); });
+    const body = await req.json().catch(() => {
+      throw new RequestValidationError("Invalid JSON");
+    });
     const gatewayRequest = parseGatewayRequest(body);
 
+    // Usage ledger currently accepts only operation 'chat'. Draft shares that quota pool
+    // without creating ai_conversations / ai_messages rows.
     const reservation = await reserveAiRequest(supabaseUrl, serviceRoleKey, {
-      p_user_id: userId,
+      p_user_id: user.id,
       p_request_id: requestId,
-      p_operation: gatewayRequest.operation,
+      p_operation: "chat",
       p_hour_limit: AI_LIMITS.requestsPerHour,
       p_day_limit: AI_LIMITS.requestsPerDay,
     });
 
     if (!reservation.allowed) {
       return jsonResponse(req, { error: { code: "RATE_LIMITED", message: "Quota exceeded." } }, 429);
+    }
+
+    const providerConfig = {
+      langdock: {
+        name: "langdock" as const,
+        endpoint: "https://api.langdock.com/openai/eu/v1/chat/completions",
+        apiKey: langdockKey,
+        model: langdockModel,
+      },
+      logicc: logiccKey && logiccEndpoint && logiccModel
+        ? {
+          name: "logicc" as const,
+          endpoint: `${logiccEndpoint.replace(/\/$/, "")}/chat/completions`,
+          apiKey: logiccKey,
+          model: logiccModel,
+        }
+        : null,
+      enableLogiccFallback,
+      langdockDisabled,
+      maxOutputTokens: AI_LIMITS.maxOutputTokens,
+      timeoutMs: AI_LIMITS.providerTimeoutMs,
+      correlationId: requestId,
+      warn: (payload: unknown) => {
+        console.warn("[AI-PROVIDER]", JSON.stringify(payload));
+      },
+    };
+
+    if (gatewayRequest.operation === "draft") {
+      const result = await runWithFailover(
+        [{ role: "user", content: gatewayRequest.prompt }],
+        {
+          ...providerConfig,
+          systemInstruction: DRAFT_SYSTEM_INSTRUCTION,
+        },
+      );
+
+      // Nonpersistent by design: no ai_conversations / ai_messages writes.
+      return jsonResponse(req, {
+        request_id: requestId,
+        operation: "draft",
+        persistent: false,
+        message: { role: "assistant", content: result.content },
+        provider: result.provider,
+        usage: result.usage,
+      });
     }
 
     let conversationId = gatewayRequest.conversation_id;
@@ -120,20 +166,24 @@ serve(async (req) => {
         .single();
 
       if (convCheckError || !convExists) {
-        return jsonResponse(req, { error: { code: "UNAUTHORIZED", message: "Conversation not found or access denied." } }, 404);
+        return jsonResponse(req, {
+          error: { code: "UNAUTHORIZED", message: "Conversation not found or access denied." },
+        }, 404);
       }
     } else {
       const firstMsg = gatewayRequest.messages[0]?.content || "";
       const title = firstMsg.slice(0, 100) || "New Conversation";
       const { data: newConv, error: createError } = await authClient
         .from("ai_conversations")
-        .insert({ user_id: userId, title })
+        .insert({ user_id: user.id, title })
         .select("id")
         .single();
 
       if (createError || !newConv) {
-        console.error("[CONVERSATION-CREATE-ERROR]", createError);
-        return jsonResponse(req, { error: { code: "SERVER_ERROR", message: "Failed to create conversation." } }, 500);
+        console.error("[CONVERSATION-CREATE-ERROR]", createError?.code || "create_failed");
+        return jsonResponse(req, {
+          error: { code: "SERVER_ERROR", message: "Failed to create conversation." },
+        }, 500);
       }
       conversationId = newConv.id;
     }
@@ -149,31 +199,14 @@ serve(async (req) => {
         });
 
       if (msgInsertError) {
-        console.error("[MESSAGE-INSERT-ERROR]", msgInsertError);
-        return jsonResponse(req, { error: { code: "SERVER_ERROR", message: "Failed to save message." } }, 500);
+        console.error("[MESSAGE-INSERT-ERROR]", msgInsertError.code || "insert_failed");
+        return jsonResponse(req, {
+          error: { code: "SERVER_ERROR", message: "Failed to save message." },
+        }, 500);
       }
     }
 
-    const result = await runWithFailover(gatewayRequest.messages, {
-      langdock: {
-        name: "langdock",
-        endpoint: "https://api.langdock.com/openai/eu/v1/chat/completions",
-        apiKey: langdockKey,
-        model: langdockModel,
-      },
-      logicc: logiccKey && logiccEndpoint && logiccModel
-        ? { name: "logicc", endpoint: `${logiccEndpoint.replace(/\/$/, "")}/chat/completions`, apiKey: logiccKey, model: logiccModel }
-        : null,
-      enableLogiccFallback,
-      langdockDisabled,
-      maxOutputTokens: AI_LIMITS.maxOutputTokens,
-      timeoutMs: AI_LIMITS.providerTimeoutMs,
-      correlationId: requestId,
-      warn: (payload) => {
-        // Privacy-safe operational signal only (provider/code/correlation). No keys, prompts, or PII.
-        console.warn("[AI-PROVIDER]", JSON.stringify(payload));
-      },
-    });
+    const result = await runWithFailover(gatewayRequest.messages, providerConfig);
 
     const { error: assistantInsertError } = await authClient
       .from("ai_messages")
@@ -184,40 +217,63 @@ serve(async (req) => {
       });
 
     if (assistantInsertError) {
-      console.error("[ASSISTANT-INSERT-ERROR]", assistantInsertError);
+      console.error("[ASSISTANT-INSERT-ERROR]", assistantInsertError.code || "insert_failed");
     }
 
     return jsonResponse(req, {
       request_id: requestId,
       conversation_id: conversationId,
+      operation: "chat",
+      persistent: true,
       message: { role: "assistant", content: result.content },
       provider: result.provider,
       usage: result.usage,
     });
-
-  } catch (error: any) {
+  } catch (error: unknown) {
     if (error instanceof ProviderRequestError) {
-      // Privacy-safe: provider name + normalized code only. No keys, prompts, or response bodies.
-      console.error(`[AI-GATEWAY-ERROR] ID: ${requestId} | provider=${error.provider} code=${error.code}`);
+      console.error(
+        `[AI-GATEWAY-ERROR] ID: ${requestId} | provider=${error.provider} code=${error.code}`,
+      );
     } else {
-      console.error(`[AI-GATEWAY-ERROR] ID: ${requestId} | ${error?.name || "Error"}`);
+      const name = error instanceof Error ? error.name : "Error";
+      console.error(`[AI-GATEWAY-ERROR] ID: ${requestId} | ${name}`);
     }
 
-    if (typeof error?.message === "string" && error.message.includes("MISSING_CONFIG")) {
-      return jsonResponse(req, { error: { code: "SERVER_CONFIG_ERROR", message: "Internal configuration error.", request_id: requestId } }, 500);
+    if (error instanceof Error && error.message.includes("MISSING_CONFIG")) {
+      return jsonResponse(req, {
+        error: {
+          code: "SERVER_CONFIG_ERROR",
+          message: "Internal configuration error.",
+          request_id: requestId,
+        },
+      }, 500);
     }
     if (error instanceof RequestValidationError) {
-      return jsonResponse(req, { error: { code: "INVALID_REQUEST", message: error.message, request_id: requestId } }, 400);
+      return jsonResponse(req, {
+        error: { code: "INVALID_REQUEST", message: error.message, request_id: requestId },
+      }, 400);
     }
     if (error instanceof ProviderRequestError) {
       const mapping: Record<string, string> = {
-        "PROVIDER_AUTH_ERROR": "SERVER_CONFIG_ERROR",
-        "PROVIDER_RATE_LIMITED": "RATE_LIMITED",
-        "PROVIDER_UNAVAILABLE": "PROVIDER_UNAVAILABLE",
+        PROVIDER_AUTH_ERROR: "SERVER_CONFIG_ERROR",
+        PROVIDER_RATE_LIMITED: "RATE_LIMITED",
+        PROVIDER_UNAVAILABLE: "PROVIDER_UNAVAILABLE",
       };
-      return jsonResponse(req, { error: { code: mapping[error.code] || "PROVIDER_UNAVAILABLE", message: "AI service error.", request_id: requestId } }, 503);
+      return jsonResponse(req, {
+        error: {
+          code: mapping[error.code] || "PROVIDER_UNAVAILABLE",
+          message: "AI service error.",
+          request_id: requestId,
+        },
+      }, 503);
     }
 
-    return jsonResponse(req, { error: { code: "SERVER_ERROR", message: "An unexpected error occurred.", request_id: requestId } }, 500);
+    return jsonResponse(req, {
+      error: {
+        code: "SERVER_ERROR",
+        message: "An unexpected error occurred.",
+        request_id: requestId,
+      },
+    }, 500);
   }
 });

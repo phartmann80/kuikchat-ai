@@ -49,7 +49,7 @@ import { ScreenshotAlert } from "./ScreenshotAlert";
 import { MessageContextMenu } from "./MessageContextMenu";
 import { ScheduleMessageDialog, RepeatType } from "./ScheduleMessageDialog";
 import { ReplyBubble } from "./ReplyBubble";
-import { AskAIDialog } from "./AskAIDialog";
+import { DraftWithAIDialog } from "./DraftWithAIDialog";
 import { AIArtStudio } from "./AIArtStudio";
 import { MultimodalAICall } from "./MultimodalAICall";
 import { useToast } from "@/hooks/use-toast";
@@ -87,7 +87,6 @@ const attachmentOptions = [
   { icon: MapPin, label: "Location", color: "from-green-500 to-emerald-500", action: "location" },
   { icon: QrCode, label: "QR Code", color: "from-pink-500 to-rose-500", action: "qr" },
   { icon: Palette, label: "AI Art", color: "from-primary to-secondary", action: "ai-art" },
-  { icon: Bot, label: "Ask AI", color: "from-violet-500 to-purple-500", action: "ask-ai" },
   { icon: PhoneCall, label: "AI Call", color: "from-cyan-500 to-blue-500", action: "ai-call" },
 ];
 
@@ -105,7 +104,8 @@ export const ChatWindow = ({ chatId, contact, onBack, wallpaper = "transparent",
   const [disappearingDuration, setDisappearingDuration] = useState<DisappearingDuration>("off");
   const [showScheduleDialog, setShowScheduleDialog] = useState(false);
   const [replyingTo, setReplyingTo] = useState<{ id: string; content: string; sender: string } | null>(null);
-  const [showAskAI, setShowAskAI] = useState(false);
+  const [showDraftAI, setShowDraftAI] = useState(false);
+  const draftAiButtonRef = useRef<HTMLButtonElement>(null);
   const [showAIArt, setShowAIArt] = useState(false);
   const [showAICall, setShowAICall] = useState(false);
   const [longPressTimer, setLongPressTimer] = useState<NodeJS.Timeout | null>(null);
@@ -237,9 +237,6 @@ export const ChatWindow = ({ chatId, contact, onBack, wallpaper = "transparent",
         break;
       case "ai-art":
         setShowAIArt(true);
-        break;
-      case "ask-ai":
-        setShowAskAI(true);
         break;
       case "ai-call":
         setShowAICall(true);
@@ -496,6 +493,9 @@ ${imageUrl}`);
       <AnimatePresence>
         {showAttachments && (
           <motion.div
+            id="chat-attachment-menu"
+            role="menu"
+            aria-label="Attachment options"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
@@ -506,16 +506,19 @@ ${imageUrl}`);
                 {attachmentOptions.map((option, index) => (
                   <motion.button
                     key={option.label}
+                    type="button"
+                    aria-label={option.label}
                     initial={{ opacity: 0, scale: 0.8 }}
                     animate={{ opacity: 1, scale: 1 }}
                     transition={{ delay: index * 0.05 }}
                     whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.95 }}
                     onClick={() => handleAttachmentAction(option.action)}
+                    className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 rounded-xl"
                   >
                     <div className="flex flex-col items-center gap-2">
                       <div className={`p-2 rounded-xl bg-gradient-to-br ${option.color} text-white`}>
-                        <option.icon className="w-6 h-6" />
+                        <option.icon className="w-6 h-6" aria-hidden />
                       </div>
                       <span className="text-[10px] font-medium">{option.label}</span>
                     </div>
@@ -559,15 +562,31 @@ ${imageUrl}`);
             <Button
               variant="ghost"
               size="icon"
-              className="rounded-full shrink-0 text-slate-300 hover:text-slate-100"
+              className="rounded-full shrink-0 text-slate-300 hover:text-slate-100 focus-visible:ring-2 focus-visible:ring-ring"
               onClick={() => setShowAttachments(!showAttachments)}
+              aria-label="Attachments"
+              aria-expanded={showAttachments}
+              aria-controls="chat-attachment-menu"
             >
-              <Paperclip className={`w-5 h-5 transition-transform ${showAttachments ? 'rotate-45' : ''}`} />
+              <Paperclip className={`w-5 h-5 transition-transform ${showAttachments ? "rotate-45" : ""}`} aria-hidden />
+            </Button>
+
+            <Button
+              ref={draftAiButtonRef}
+              variant="ghost"
+              size="icon"
+              className="rounded-full shrink-0 text-slate-300 hover:text-slate-100 focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => setShowDraftAI(true)}
+              aria-label="Draft with AI"
+              title="Draft with AI"
+            >
+              <Bot className="w-5 h-5" aria-hidden />
             </Button>
 
             <div className="flex-1 relative">
               <Input
                 placeholder="Type a message..."
+                aria-label="Message"
                 className="pr-10 bg-slate-900/60 border-slate-800 text-slate-100 placeholder:text-slate-500 rounded-full"
                 value={messageText}
                 onChange={(e) => setMessageText(e.target.value)}
@@ -585,8 +604,9 @@ ${imageUrl}`);
                     variant="ghost"
                     size="icon"
                     className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full text-slate-300 hover:text-slate-100"
+                    aria-label="Insert emoji"
                   >
-                    <Smile className="w-5 h-5" />
+                    <Smile className="w-5 h-5" aria-hidden />
                   </Button>
                 }
               />
@@ -653,10 +673,11 @@ ${imageUrl}`);
         messagePreview={messageText}
       />
 
-      <AskAIDialog
-        open={showAskAI}
-        onClose={() => setShowAskAI(false)}
+      <DraftWithAIDialog
+        open={showDraftAI}
+        onClose={() => setShowDraftAI(false)}
         onInsert={(text) => setMessageText(text)}
+        returnFocusRef={draftAiButtonRef}
       />
 
       <AIArtStudio
