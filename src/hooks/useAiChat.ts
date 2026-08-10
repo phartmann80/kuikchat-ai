@@ -2,6 +2,9 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import {
+  acceptOwnedConversation,
+  appendUniqueHermesMessage,
+  isStaleHermesRequest,
   selectHermesConversationId,
   type HermesConversationSummary,
 } from "@/lib/hermesConversationSelection";
@@ -155,10 +158,15 @@ export const useAiChat = (options: UseAiChatOptions = {}): UseAiChatReturn => {
         .eq("user_id", userId)
         .maybeSingle();
 
-      if (controller.signal.aborted || seq !== loadSeq.current) return false;
+      if (controller.signal.aborted || isStaleHermesRequest(seq, loadSeq.current)) return false;
 
       if (ownership.error) throw ownership.error;
-      if (!ownership.data) {
+      const owned = acceptOwnedConversation({
+        requestedId: id,
+        row: ownership.data,
+        authUserId: userId,
+      });
+      if (!owned.ok) {
         setHistoryError("Conversation not found or access denied.");
         setHistoryStatus("error");
         setMessages([]);
@@ -173,7 +181,7 @@ export const useAiChat = (options: UseAiChatOptions = {}): UseAiChatReturn => {
         .eq("conversation_id", id)
         .order("created_at", { ascending: true });
 
-      if (controller.signal.aborted || seq !== loadSeq.current) return false;
+      if (controller.signal.aborted || isStaleHermesRequest(seq, loadSeq.current)) return false;
       if (fetchError) throw fetchError;
 
       const history: ChatMessage[] = (data || []).map((row) => ({
@@ -188,7 +196,7 @@ export const useAiChat = (options: UseAiChatOptions = {}): UseAiChatReturn => {
       setHistoryStatus("ready");
       return true;
     } catch (err: unknown) {
-      if (controller.signal.aborted || seq !== loadSeq.current) return false;
+      if (controller.signal.aborted || isStaleHermesRequest(seq, loadSeq.current)) return false;
       const message = err instanceof Error ? err.message : "Failed to load conversation history.";
       setHistoryError(message);
       setHistoryStatus("error");
@@ -196,7 +204,7 @@ export const useAiChat = (options: UseAiChatOptions = {}): UseAiChatReturn => {
       setConversationId(null);
       return false;
     } finally {
-      if (seq === loadSeq.current) setIsLoading(false);
+      if (!isStaleHermesRequest(seq, loadSeq.current)) setIsLoading(false);
     }
   }, [userId]);
 
@@ -352,10 +360,7 @@ export const useAiChat = (options: UseAiChatOptions = {}): UseAiChatReturn => {
         content: data.message.content,
       };
 
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === assistantMsg.id)) return prev;
-        return [...prev, assistantMsg];
-      });
+      setMessages((prev) => appendUniqueHermesMessage(prev, assistantMsg));
 
       if (mode === "hermes") {
         await refreshConversations().catch(() => undefined);
