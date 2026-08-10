@@ -16,7 +16,8 @@
 - [x] Confirm live provider endpoints, authentication, and model identifiers.
 - [x] Add the RLS-protected usage ledger and atomic reservation function.
 - [x] Implement the authenticated Edge Function gateway.
-- [x] Add typed Langdock and OpenRouter providers with failover.
+- [x] Add typed Langdock provider (Logicc optional, disabled by default).
+- [x] Remove non-approved third-party router dependencies from gateway boot.
 - [x] Add request/token/rate guardrails and sanitized errors.
 - [x] Test primary success and fallback behavior locally.
 - [ ] Deploy to the live Supabase project and prove both paths.
@@ -24,7 +25,7 @@
 ### Success Criteria
 
 - A trivial authenticated text call succeeds through Langdock.
-- Disabling Langdock sends the same request through `openrouter/free`.
+- Disabling Langdock returns a normalized gateway error unless Logicc fallback is explicitly enabled and configured.
 - Both requests are recorded without prompt or completion content.
 - Over-limit and unauthenticated requests are rejected server-side.
 

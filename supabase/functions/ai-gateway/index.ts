@@ -88,11 +88,12 @@ serve(async (req) => {
     const langdockKey = requiredEnv("LANGDOCK_API_KEY");
     const langdockModel = requiredEnv("LANGDOCK_MODEL");
     const langdockDisabled = Deno.env.get("AI_LANGDOCK_DISABLED") === "true";
-    // OpenRouter is always required so Langdock auth/unavailable failures can fail over.
-    const openrouterConfig = {
-      apiKey: requiredEnv("OPENROUTER_API_KEY"),
-      model: requiredEnv("OPENROUTER_MODEL"),
-    };
+    // Approved text providers: Langdock (live) and Logicc (optional, disabled until configured).
+    // Logicc is not required for gateway boot and is not enabled in production routing yet.
+    const logiccKey = Deno.env.get("LOGICC_API_KEY")?.trim() || "";
+    const logiccEndpoint = Deno.env.get("LOGICC_ENDPOINT_URL")?.trim() || "";
+    const logiccModel = Deno.env.get("LOGICC_MODEL")?.trim() || "";
+    const enableLogiccFallback = Deno.env.get("AI_LOGICC_FALLBACK_ENABLED") === "true";
 
     const body = await req.json().catch(() => { throw new RequestValidationError("Invalid JSON"); });
     const gatewayRequest = parseGatewayRequest(body);
@@ -154,15 +155,23 @@ serve(async (req) => {
     }
 
     const result = await runWithFailover(gatewayRequest.messages, {
-      langdock: { name: "langdock", endpoint: "https://api.langdock.com/openai/eu/v1/chat/completions", apiKey: langdockKey, model: langdockModel },
-      openrouter: { name: "openrouter", endpoint: "https://openrouter.ai/api/v1/chat/completions", apiKey: openrouterConfig.apiKey, model: openrouterConfig.model },
+      langdock: {
+        name: "langdock",
+        endpoint: "https://api.langdock.com/openai/eu/v1/chat/completions",
+        apiKey: langdockKey,
+        model: langdockModel,
+      },
+      logicc: logiccKey && logiccEndpoint && logiccModel
+        ? { name: "logicc", endpoint: `${logiccEndpoint.replace(/\/$/, "")}/chat/completions`, apiKey: logiccKey, model: logiccModel }
+        : null,
+      enableLogiccFallback,
       langdockDisabled,
       maxOutputTokens: AI_LIMITS.maxOutputTokens,
       timeoutMs: AI_LIMITS.providerTimeoutMs,
       correlationId: requestId,
       warn: (payload) => {
         // Privacy-safe operational signal only (provider/code/correlation). No keys, prompts, or PII.
-        console.warn("[AI-PROVIDER-FAILOVER]", JSON.stringify(payload));
+        console.warn("[AI-PROVIDER]", JSON.stringify(payload));
       },
     });
 

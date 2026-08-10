@@ -20,7 +20,7 @@ export interface TokenUsage {
 }
 
 export interface ProviderResult {
-  provider: "langdock" | "openrouter";
+  provider: "langdock" | "logicc";
   model: string;
   content: string;
   usage: TokenUsage;

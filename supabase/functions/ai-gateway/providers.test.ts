@@ -1,6 +1,6 @@
 import {
   ProviderRequestError,
-  emitFailoverWarning,
+  emitProviderWarning,
   runWithFailover,
 } from "./providers.ts";
 
@@ -15,12 +15,13 @@ const baseConfig = {
     apiKey: "test-langdock-key",
     model: "gpt-test",
   },
-  openrouter: {
-    name: "openrouter" as const,
-    endpoint: "https://openrouter.test/chat",
-    apiKey: "test-openrouter-key",
-    model: "openrouter/free",
+  logicc: {
+    name: "logicc" as const,
+    endpoint: "https://logicc.test/chat",
+    apiKey: "test-logicc-key",
+    model: "logicc-test",
   },
+  enableLogiccFallback: false,
   maxOutputTokens: 100,
   timeoutMs: 1_000,
   correlationId: "corr-test-1",
@@ -50,47 +51,38 @@ Deno.test("uses Langdock when the primary provider succeeds", async () => {
   });
   assert(result.provider === "langdock", "expected Langdock");
   assert(result.fallbackUsed === false, "fallback should not be marked as used");
-  assert(calls.length === 1, "OpenRouter must not be invoked on Langdock success");
-  assert(warnings.length === 0, "no failover warning on primary success");
+  assert(calls.length === 1, "only Langdock should be invoked");
+  assert(warnings.length === 0, "no warning on primary success");
 });
 
-Deno.test("falls back to OpenRouter when Langdock is unavailable", async () => {
-  const warnings: Array<{ code: string }> = [];
+Deno.test("Langdock failure does not call Logicc when fallback is disabled", async () => {
+  const calls: string[] = [];
+  let thrown: unknown;
+  try {
+    await runWithFailover([{ role: "user", content: "Hello" }], {
+      ...baseConfig,
+      enableLogiccFallback: false,
+      warn: () => {},
+      fetcher: (input) => {
+        calls.push(String(input));
+        return Promise.resolve(new Response("unauthorized", { status: 401 }));
+      },
+    });
+  } catch (error) {
+    thrown = error;
+  }
+  assert(calls.length === 1, "Logicc must not be called when disabled");
+  assert(thrown instanceof ProviderRequestError, "expected ProviderRequestError");
+  assert((thrown as ProviderRequestError).provider === "langdock", "error from Langdock");
+  assert((thrown as ProviderRequestError).code === "PROVIDER_AUTH_ERROR", "auth error");
+});
+
+Deno.test("Langdock 401 triggers Logicc when fallback is explicitly enabled", async () => {
+  const warnings: Array<{ fallback_provider: string | null; code: string }> = [];
   const calls: string[] = [];
   const result = await runWithFailover([{ role: "user", content: "Hello" }], {
     ...baseConfig,
-    warn: (payload) => warnings.push(payload),
-    fetcher: (input) => {
-      const url = String(input);
-      calls.push(url);
-      return Promise.resolve(
-        url.includes("langdock.test")
-          ? new Response("unavailable", { status: 503 })
-          : completion("Fallback", "free-model"),
-      );
-    },
-  });
-  assert(calls.length === 2, "both providers should be called");
-  assert(result.provider === "openrouter", "expected OpenRouter fallback");
-  assert(result.fallbackUsed === true, "fallback should be marked as used");
-  assert(
-    result.fallbackReason === "PROVIDER_UNAVAILABLE",
-    "fallback reason should be normalized code",
-  );
-  assert(warnings[0]?.code === "PROVIDER_UNAVAILABLE", "warning should carry code");
-});
-
-Deno.test("Langdock 401 triggers OpenRouter fallback", async () => {
-  const warnings: Array<{
-    event: string;
-    provider: string;
-    code: string;
-    fallback_provider: string;
-    correlation_id: string | null;
-  }> = [];
-  const calls: string[] = [];
-  const result = await runWithFailover([{ role: "user", content: "Hello" }], {
-    ...baseConfig,
+    enableLogiccFallback: true,
     warn: (payload) => warnings.push(payload),
     fetcher: (input) => {
       const url = String(input);
@@ -98,44 +90,24 @@ Deno.test("Langdock 401 triggers OpenRouter fallback", async () => {
       return Promise.resolve(
         url.includes("langdock.test")
           ? new Response("unauthorized", { status: 401 })
-          : completion("Fallback after auth", "free-model"),
+          : completion("Fallback after auth", "logicc-test"),
       );
     },
   });
   assert(calls.length === 2, "both providers should be called");
-  assert(result.provider === "openrouter", "expected OpenRouter after Langdock 401");
-  assert(result.fallbackReason === "PROVIDER_AUTH_ERROR", "expected auth fallback reason");
-  assert(warnings.length === 1, "one structured warning expected");
-  assert(warnings[0].event === "AI_PROVIDER_FAILOVER", "expected failover event");
-  assert(warnings[0].provider === "langdock", "warning provider must be langdock");
-  assert(warnings[0].fallback_provider === "openrouter", "warning fallback must be openrouter");
-  assert(warnings[0].code === "PROVIDER_AUTH_ERROR", "warning code must be auth error");
-  assert(warnings[0].correlation_id === "corr-test-1", "correlation id must be present");
+  assert(result.provider === "logicc", "expected Logicc after Langdock 401");
+  assert(result.fallbackUsed === true, "fallback should be marked");
+  assert(warnings[0]?.fallback_provider === "logicc", "warning fallback must be logicc");
+  assert(warnings[0]?.code === "PROVIDER_AUTH_ERROR", "warning code must be auth error");
 });
 
-Deno.test("Langdock 403 triggers OpenRouter fallback", async () => {
-  const result = await runWithFailover([{ role: "user", content: "Hello" }], {
-    ...baseConfig,
-    warn: () => {},
-    fetcher: (input) => {
-      const url = String(input);
-      return Promise.resolve(
-        url.includes("langdock.test")
-          ? new Response("forbidden", { status: 403 })
-          : completion("Fallback after 403", "free-model"),
-      );
-    },
-  });
-  assert(result.provider === "openrouter", "expected OpenRouter after Langdock 403");
-  assert(result.fallbackReason === "PROVIDER_AUTH_ERROR", "expected auth fallback reason");
-});
-
-Deno.test("EMPTY_RESPONSE from Langdock does not invoke OpenRouter", async () => {
+Deno.test("EMPTY_RESPONSE from Langdock does not invoke Logicc even when enabled", async () => {
   const calls: string[] = [];
   let thrown: unknown;
   try {
     await runWithFailover([{ role: "user", content: "Hello" }], {
       ...baseConfig,
+      enableLogiccFallback: true,
       warn: () => {},
       fetcher: (input) => {
         calls.push(String(input));
@@ -153,7 +125,7 @@ Deno.test("EMPTY_RESPONSE from Langdock does not invoke OpenRouter", async () =>
   } catch (error) {
     thrown = error;
   }
-  assert(calls.length === 1, "OpenRouter must not be called for EMPTY_RESPONSE");
+  assert(calls.length === 1, "Logicc must not be called for EMPTY_RESPONSE");
   assert(thrown instanceof ProviderRequestError, "expected ProviderRequestError");
   assert(
     (thrown as ProviderRequestError).code === "EMPTY_RESPONSE",
@@ -161,58 +133,20 @@ Deno.test("EMPTY_RESPONSE from Langdock does not invoke OpenRouter", async () =>
   );
 });
 
-Deno.test("double-provider failure surfaces OpenRouter error code", async () => {
-  let thrown: unknown;
-  try {
-    await runWithFailover([{ role: "user", content: "Hello" }], {
-      ...baseConfig,
-      warn: () => {},
-      fetcher: (input) => {
-        const url = String(input);
-        return Promise.resolve(
-          url.includes("langdock.test")
-            ? new Response("unauthorized", { status: 401 })
-            : new Response("unauthorized", { status: 401 }),
-        );
-      },
-    });
-  } catch (error) {
-    thrown = error;
-  }
-  assert(thrown instanceof ProviderRequestError, "expected ProviderRequestError");
-  assert((thrown as ProviderRequestError).provider === "openrouter", "final error from OpenRouter");
-  assert(
-    (thrown as ProviderRequestError).code === "PROVIDER_AUTH_ERROR",
-    "expected auth error after both fail",
-  );
-});
-
-Deno.test("operational circuit breaker skips Langdock", async () => {
-  let calls = 0;
-  const warnings: Array<{ code: string }> = [];
-  const result = await runWithFailover([{ role: "user", content: "Hello" }], {
-    ...baseConfig,
-    langdockDisabled: true,
-    warn: (payload) => warnings.push(payload),
-    fetcher: () => {
-      calls += 1;
-      return Promise.resolve(completion("Fallback", "free-model"));
-    },
-  });
-  assert(calls === 1, "only OpenRouter should be called");
-  assert(result.provider === "openrouter", "expected OpenRouter");
-  assert(
-    result.fallbackReason === "LANGDOCK_DISABLED",
-    "expected circuit-breaker reason",
-  );
-  assert(warnings[0]?.code === "LANGDOCK_DISABLED", "warning for disabled primary");
-});
-
-Deno.test("failover warning payload never includes secrets or prompts", () => {
+Deno.test("provider warning payload never includes secrets or prompts", () => {
   const warnings: Record<string, unknown>[] = [];
-  emitFailoverWarning("PROVIDER_AUTH_ERROR", "cid-9", (payload) => {
-    warnings.push(payload as unknown as Record<string, unknown>);
-  });
+  emitProviderWarning(
+    {
+      event: "AI_PROVIDER_FAILURE",
+      provider: "langdock",
+      code: "PROVIDER_AUTH_ERROR",
+      fallback_provider: null,
+      correlationId: "cid-9",
+    },
+    (payload) => {
+      warnings.push(payload as unknown as Record<string, unknown>);
+    },
+  );
   const payload = warnings[0];
   assert(payload, "warning expected");
   const keys = Object.keys(payload).sort();

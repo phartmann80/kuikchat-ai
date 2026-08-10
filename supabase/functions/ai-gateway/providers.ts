@@ -1,30 +1,34 @@
 import type { ChatMessage, ProviderResult, TokenUsage } from "./types.ts";
 
+export type ProviderName = "langdock" | "logicc";
+
 export interface ProviderConfig {
-  name: "langdock" | "openrouter";
+  name: ProviderName;
   endpoint: string;
   apiKey: string;
   model: string;
 }
 
-export interface FailoverConfig {
+export interface ProviderRunConfig {
   langdock: ProviderConfig;
-  openrouter: ProviderConfig;
+  /** Optional secondary text provider. Not used until explicitly enabled. */
+  logicc?: ProviderConfig | null;
+  /** When true, skip Langdock. Requires an enabled Logicc config. */
   langdockDisabled?: boolean;
+  /** When true and Logicc is configured, use Logicc after Langdock failure (except EMPTY_RESPONSE). */
+  enableLogiccFallback?: boolean;
   maxOutputTokens: number;
   timeoutMs: number;
   fetcher?: typeof fetch;
-  /** Correlation ID for privacy-safe operational warnings (no prompts/keys/PII). */
   correlationId?: string;
-  /** Optional sink for structured failover warnings (defaults to console.warn). */
-  warn?: (payload: FailoverWarning) => void;
+  warn?: (payload: ProviderWarning) => void;
 }
 
-export interface FailoverWarning {
-  event: "AI_PROVIDER_FAILOVER";
-  provider: "langdock";
+export interface ProviderWarning {
+  event: "AI_PROVIDER_FAILURE" | "AI_PROVIDER_FAILOVER";
+  provider: ProviderName;
   code: string;
-  fallback_provider: "openrouter";
+  fallback_provider: ProviderName | null;
   timestamp: string;
   correlation_id: string | null;
 }
@@ -41,10 +45,10 @@ interface ProviderResponse {
 }
 
 export class ProviderRequestError extends Error {
-  readonly provider: ProviderConfig["name"];
+  readonly provider: ProviderName;
   readonly code: string;
 
-  constructor(provider: ProviderConfig["name"], code: string) {
+  constructor(provider: ProviderName, code: string) {
     super(`${provider} request failed`);
     this.name = "ProviderRequestError";
     this.provider = provider;
@@ -52,7 +56,7 @@ export class ProviderRequestError extends Error {
   }
 }
 
-/** Errors that must not trigger OpenRouter failover. */
+/** Errors that must not trigger secondary-provider failover. */
 const NON_FAILOVER_CODES = new Set(["EMPTY_RESPONSE"]);
 
 function normalizeUsage(response: ProviderResponse): TokenUsage {
@@ -66,19 +70,42 @@ function normalizeUsage(response: ProviderResponse): TokenUsage {
   };
 }
 
+export function emitProviderWarning(
+  args: {
+    event: ProviderWarning["event"];
+    provider: ProviderName;
+    code: string;
+    fallback_provider: ProviderName | null;
+    correlationId?: string | null;
+  },
+  warn: (payload: ProviderWarning) => void = console.warn,
+): void {
+  warn({
+    event: args.event,
+    provider: args.provider,
+    code: args.code,
+    fallback_provider: args.fallback_provider,
+    timestamp: new Date().toISOString(),
+    correlation_id: args.correlationId ?? null,
+  });
+}
+
+/** @deprecated Use emitProviderWarning. Kept for test migration clarity. */
 export function emitFailoverWarning(
   code: string,
   correlationId: string | null | undefined,
-  warn: (payload: FailoverWarning) => void = console.warn,
+  warn: (payload: ProviderWarning) => void = console.warn,
 ): void {
-  warn({
-    event: "AI_PROVIDER_FAILOVER",
-    provider: "langdock",
-    code,
-    fallback_provider: "openrouter",
-    timestamp: new Date().toISOString(),
-    correlation_id: correlationId ?? null,
-  });
+  emitProviderWarning(
+    {
+      event: "AI_PROVIDER_FAILOVER",
+      provider: "langdock",
+      code,
+      fallback_provider: "logicc",
+      correlationId,
+    },
+    warn,
+  );
 }
 
 export async function requestProvider(
@@ -98,9 +125,6 @@ export async function requestProvider(
       headers: {
         Authorization: `Bearer ${provider.apiKey}`,
         "Content-Type": "application/json",
-        ...(provider.name === "openrouter"
-          ? { "HTTP-Referer": "https://kuikchat.io", "X-Title": "KuikChat" }
-          : {}),
       },
       body: JSON.stringify({
         model: provider.model,
@@ -152,11 +176,18 @@ export async function requestProvider(
   }
 }
 
+/**
+ * Langdock is the production Hermes text provider.
+ * Logicc failover is code-ready but disabled unless enableLogiccFallback + logicc config are set.
+ */
 export async function runWithFailover(
   messages: ChatMessage[],
-  config: FailoverConfig,
+  config: ProviderRunConfig,
 ): Promise<ProviderResult> {
   const fetcher = config.fetcher ?? fetch;
+  const logiccEnabled = Boolean(
+    config.enableLogiccFallback && config.logicc?.apiKey && config.logicc?.endpoint && config.logicc?.model,
+  );
   let fallbackReason: string | null = null;
 
   if (!config.langdockDisabled) {
@@ -171,34 +202,70 @@ export async function runWithFailover(
       return { ...result, fallbackUsed: false, fallbackReason: null };
     } catch (error) {
       if (error instanceof ProviderRequestError) {
-        if (NON_FAILOVER_CODES.has(error.code)) {
+        if (NON_FAILOVER_CODES.has(error.code) || !logiccEnabled) {
+          emitProviderWarning(
+            {
+              event: "AI_PROVIDER_FAILURE",
+              provider: "langdock",
+              code: error.code,
+              fallback_provider: null,
+              correlationId: config.correlationId,
+            },
+            config.warn,
+          );
           throw error;
         }
         fallbackReason = error.code;
-        emitFailoverWarning(error.code, config.correlationId, config.warn);
+        emitProviderWarning(
+          {
+            event: "AI_PROVIDER_FAILOVER",
+            provider: "langdock",
+            code: error.code,
+            fallback_provider: "logicc",
+            correlationId: config.correlationId,
+          },
+          config.warn,
+        );
+      } else if (!logiccEnabled) {
+        throw error;
       } else {
         fallbackReason = "LANGDOCK_UNKNOWN_ERROR";
-        emitFailoverWarning(fallbackReason, config.correlationId, config.warn);
+        emitProviderWarning(
+          {
+            event: "AI_PROVIDER_FAILOVER",
+            provider: "langdock",
+            code: fallbackReason,
+            fallback_provider: "logicc",
+            correlationId: config.correlationId,
+          },
+          config.warn,
+        );
       }
     }
+  } else if (!logiccEnabled) {
+    throw new ProviderRequestError("langdock", "LANGDOCK_DISABLED");
   } else {
     fallbackReason = "LANGDOCK_DISABLED";
-    emitFailoverWarning(fallbackReason, config.correlationId, config.warn);
+    emitProviderWarning(
+      {
+        event: "AI_PROVIDER_FAILOVER",
+        provider: "langdock",
+        code: fallbackReason,
+        fallback_provider: "logicc",
+        correlationId: config.correlationId,
+      },
+      config.warn,
+    );
   }
 
-  try {
-    const result = await requestProvider(
-      config.openrouter,
-      messages,
-      config.maxOutputTokens,
-      config.timeoutMs,
-      fetcher,
-    );
-    return { ...result, fallbackUsed: true, fallbackReason };
-  } catch (error) {
-    if (error instanceof ProviderRequestError) {
-      throw error;
-    }
-    throw error;
-  }
+  // Logicc path — only reached when explicitly enabled.
+  const logicc = config.logicc!;
+  const result = await requestProvider(
+    logicc,
+    messages,
+    config.maxOutputTokens,
+    config.timeoutMs,
+    fetcher,
+  );
+  return { ...result, fallbackUsed: true, fallbackReason };
 }
