@@ -31,7 +31,7 @@ export const AskAIDialog = ({ open, onClose, onInsert }: AskAIDialogProps) => {
     error, 
     sendMessage, 
     startNewChat 
-  } = useAiChat();
+  } = useAiChat({ mode: "ephemeral" });
 
   useEffect(() => {
     if (scrollRef.current) {

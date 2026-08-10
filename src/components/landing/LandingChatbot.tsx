@@ -23,7 +23,7 @@ export const LandingChatbot = () => {
         messages: aiMessages,
         isLoading: aiLoading,
         sendMessage
-    } = useAiChat();
+    } = useAiChat({ mode: "ephemeral" });
 
     useEffect(() => {
         const getSession = async () => {
