@@ -4,10 +4,11 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 /**
  * Attachments Edge Function:
  * - mints signed upload/download URLs after RPC authorization
- * - runs streaming verify + test scanner adapter
+ * - streaming verify + optional test scanner (test env only)
  * - janitor endpoints for expiry/purge
  *
- * Never enables uploads itself; RPCs enforce attachment_runtime_config.uploads_enabled=false by default.
+ * Never enables uploads itself; RPCs enforce attachment_runtime_config defaults.
+ * Production must not invoke TestScannerAdapter.
  */
 
 const cors = {
@@ -37,41 +38,17 @@ function userClient(authHeader: string) {
   });
 }
 
-async function sha256AndSniff(res: Response, declared: string) {
-  if (!res.body) throw new Error("EMPTY_BODY");
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let byteSize = 0;
-  let first = new Uint8Array();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (!value) continue;
-    if (first.length === 0) first = value.slice(0, 64);
-    chunks.push(value);
-    byteSize += value.length;
-  }
-  const blob = new Blob(chunks);
-  const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
-  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-
-  let sniffed: string | null = null;
-  const magic = [
-    { mime: "image/jpeg", bytes: [0xff, 0xd8, 0xff] },
-    { mime: "image/png", bytes: [0x89, 0x50, 0x4e, 0x47] },
-    { mime: "image/gif", bytes: [0x47, 0x49, 0x46, 0x38] },
-    { mime: "application/pdf", bytes: [0x25, 0x50, 0x44, 0x46] },
-  ];
-  for (const m of magic) {
-    if (m.bytes.every((b, i) => first[i] === b)) sniffed = m.mime;
-  }
-  if (!sniffed && (declared === "text/plain" || declared.startsWith("audio/") || declared.startsWith("video/"))) {
-    sniffed = declared;
-  }
-  return { hex, byteSize, sniffed };
+function testScannerAllowed(): boolean {
+  return (
+    Deno.env.get("ATTACHMENT_ENV") === "test" &&
+    Deno.env.get("ATTACHMENT_ALLOW_TEST_SCANNER") === "true"
+  );
 }
 
 async function runTestScan(checksum: string, attachmentId: string) {
+  if (!testScannerAllowed()) {
+    throw new Error("TEST_SCANNER_FORBIDDEN");
+  }
   if (checksum.endsWith("bad")) {
     return { verdict: "malware" as const, engine: "test-adapter", signals: ["TEST_MALWARE"] };
   }
@@ -79,6 +56,12 @@ async function runTestScan(checksum: string, attachmentId: string) {
     return { verdict: "failed" as const, engine: "test-adapter", failureCode: "SCANNER_UNAVAILABLE" };
   }
   return { verdict: "clean" as const, engine: "test-adapter", externalId: `test-${attachmentId}` };
+}
+
+function bearerEqualsServiceRole(authHeader: string): boolean {
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  return Boolean(key) && token === key;
 }
 
 serve(async (req) => {
@@ -90,14 +73,8 @@ serve(async (req) => {
     const action = url.searchParams.get("action") || (await req.clone().json().catch(() => ({}))).action;
 
     if (action === "janitor") {
-      // service-role only janitor
-      const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-      if (!authHeader.includes(key.slice(0, 12))) {
-        // require service bearer
-        const svc = serviceClient();
-        const token = authHeader.replace(/^Bearer\s+/i, "");
-        if (token !== key) return json(401, { error: { code: "UNAUTHORIZED" } });
-        void svc;
+      if (!bearerEqualsServiceRole(authHeader)) {
+        return json(401, { error: { code: "UNAUTHORIZED" } });
       }
       const svc = serviceClient();
       const nowIso = new Date().toISOString();
@@ -121,6 +98,7 @@ serve(async (req) => {
         .eq("status", "scanning");
 
       const failAfterMs = 15 * 60 * 1000;
+      let scannerTimeouts = 0;
       for (const row of scanning || []) {
         const started = row.scan_started_at ? new Date(row.scan_started_at).getTime() : 0;
         if (started && Date.now() - started > failAfterMs) {
@@ -128,6 +106,7 @@ serve(async (req) => {
             p_attachment_id: row.id,
             p_failure_code: "SCANNER_UNAVAILABLE",
           });
+          scannerTimeouts += 1;
         }
       }
 
@@ -144,7 +123,7 @@ serve(async (req) => {
 
       return json(200, {
         expired: expired?.length || 0,
-        scanner_timeouts: scanning?.length || 0,
+        scanner_timeouts: scannerTimeouts,
         purged: purgable?.length || 0,
       });
     }
@@ -171,11 +150,29 @@ serve(async (req) => {
         return json(400, { error: { code: error.message || "INITIATE_FAILED" } });
       }
 
+      // Idempotent replay of a completed object must never mint a new upload URL.
+      if (data?.status && !["initiated", "uploading"].includes(String(data.status))) {
+        return json(409, {
+          error: { code: "UPLOAD_NOT_MUTABLE", status: data.status },
+          attachment_id: data.attachment_id,
+        });
+      }
+
       const svc = serviceClient();
       const path = data.storage_path as string;
+
+      // Refuse signed upload if an object already exists at the reserved path.
+      const { data: listed } = await svc.storage.from("chat-attachments").list(
+        path.replace(/\/[^/]+$/, ""),
+        { search: "original" },
+      );
+      if ((listed || []).some((o) => o.name === "original" || path.endsWith(`/${o.name}`))) {
+        return json(409, { error: { code: "OBJECT_EXISTS" } });
+      }
+
       const { data: signed, error: signErr } = await svc.storage
         .from("chat-attachments")
-        .createSignedUploadUrl(path);
+        .createSignedUploadUrl(path, { upsert: false });
       if (signErr || !signed) {
         return json(500, { error: { code: "SIGN_UPLOAD_FAILED" } });
       }
@@ -200,12 +197,6 @@ serve(async (req) => {
         .from(row.storage_bucket)
         .download(row.storage_path);
       if (dlErr || !file) {
-        await userSb.rpc("finalize_chat_attachment", {
-          p_attachment_id: attachmentId,
-          p_byte_size: 0,
-          p_content_type: row.declared_content_type,
-          p_checksum_sha256: "0".repeat(64),
-        }).catch(() => null);
         return json(400, { error: { code: "OBJECT_MISSING" } });
       }
 
@@ -228,6 +219,19 @@ serve(async (req) => {
       if (finErr) return json(400, { error: { code: finErr.message || "FINALIZE_FAILED" } });
 
       if (fin?.status === "scanning") {
+        if (!testScannerAllowed()) {
+          // No production scanner approved/deployed — fail closed.
+          await svc.rpc("attachment_worker_set_failed", {
+            p_attachment_id: attachmentId,
+            p_failure_code: "SCANNER_UNAVAILABLE",
+          });
+          return json(503, {
+            error: { code: "SCANNER_UNAVAILABLE" },
+            attachment_id: attachmentId,
+            status: "failed",
+          });
+        }
+
         const scan = await runTestScan(hex, attachmentId);
         if (scan.verdict === "clean") {
           await svc.rpc("attachment_worker_set_available", {
@@ -239,7 +243,6 @@ serve(async (req) => {
         if (scan.verdict === "malware") {
           const qPath = String(row.storage_path).replace(/\/original$/, "/quarantine");
           await svc.storage.from("chat-attachments").move(row.storage_path, qPath);
-          // move within bucket then copy to quarantine bucket
           const { data: qObj } = await svc.storage.from("chat-attachments").download(qPath);
           if (qObj) {
             await svc.storage.from("chat-attachments-quarantine").upload(qPath, qObj, {
@@ -281,7 +284,6 @@ serve(async (req) => {
         expires_in: data.expires_in,
         content_type: data.content_type,
         byte_size: data.byte_size,
-        // original_filename intentionally omitted from logs; returned for Content-Disposition only
         filename: data.original_filename,
       });
     }

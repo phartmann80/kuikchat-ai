@@ -1,7 +1,7 @@
 /**
  * Malware scanner adapter interface.
  * Production AttachmentScanner wiring is gated until vendor DPA/training/webhook
- * confirmation. Default runtime uses the non-production TestScannerAdapter.
+ * confirmation. Test adapter is never the default outside an explicit test env.
  */
 
 export type ScanVerdict = "clean" | "malware" | "suspicious" | "failed" | "pending";
@@ -70,11 +70,32 @@ export class AttachmentScannerAdapter implements MalwareScannerAdapter {
   }
 }
 
-export function createScannerAdapter(kind: string | undefined): MalwareScannerAdapter {
+export type ScannerFactoryOptions = {
+  /** Must be true together with kind === "test". Never set in production. */
+  allowTest?: boolean;
+};
+
+/**
+ * Factory: production defaults fail closed (no scanner).
+ * Test adapter only when kind="test" AND allowTest=true.
+ */
+export function createScannerAdapter(
+  kind: string | undefined,
+  opts: ScannerFactoryOptions = {},
+): MalwareScannerAdapter {
   if (kind === "attachmentscanner") {
     return new AttachmentScannerAdapter();
   }
-  return new TestScannerAdapter();
+  if (kind === "test") {
+    if (!opts.allowTest) {
+      throw new Error("TestScannerAdapter rejected outside allowTest environment");
+    }
+    return new TestScannerAdapter();
+  }
+  if (kind === "clamav") {
+    throw new Error("ClamAV adapter not deployed");
+  }
+  throw new Error("No production scanner configured");
 }
 
 export function mapScanVerdictToWorkerAction(result: ScanResult): "available" | "quarantine" | "fail" {

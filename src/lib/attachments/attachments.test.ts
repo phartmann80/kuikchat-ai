@@ -15,8 +15,13 @@ import {
 import { sniffMimeFromMagic } from "./verifyStream.ts";
 
 describe("attachment scanner adapters", () => {
-  it("uses test adapter by default and never calls AttachmentScanner live", async () => {
-    const adapter = createScannerAdapter(undefined);
+  it("fails closed by default and never selects AttachmentScanner live", async () => {
+    assert.throws(() => createScannerAdapter(undefined), /No production scanner configured/);
+    assert.throws(
+      () => createScannerAdapter("test"),
+      /TestScannerAdapter rejected outside allowTest environment/,
+    );
+    const adapter = createScannerAdapter("test", { allowTest: true });
     assert.equal(adapter.name, "test-adapter");
     const clean = await adapter.scan({
       attachmentId: "a1",

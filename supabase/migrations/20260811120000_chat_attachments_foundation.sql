@@ -851,18 +851,18 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.initiate_chat_attachment(uuid, text, text, bigint, text, text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.mark_chat_attachment_uploading(uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.finalize_chat_attachment(uuid, bigint, text, text, text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.cancel_chat_attachment(uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.soft_delete_chat_attachment(uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.create_chat_attachment_download_grant(uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.bind_attachments_to_message(uuid, uuid[]) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.attachment_worker_set_available(uuid, text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.attachment_worker_set_quarantined(uuid, text, text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.attachment_worker_set_failed(uuid, text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.tombstone_uploader_attachments(uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.attachment_release_quota(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.initiate_chat_attachment(uuid, text, text, bigint, text, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.mark_chat_attachment_uploading(uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.finalize_chat_attachment(uuid, bigint, text, text, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.cancel_chat_attachment(uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.soft_delete_chat_attachment(uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.create_chat_attachment_download_grant(uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.bind_attachments_to_message(uuid, uuid[]) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.attachment_worker_set_available(uuid, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.attachment_worker_set_quarantined(uuid, text, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.attachment_worker_set_failed(uuid, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.tombstone_uploader_attachments(uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.attachment_release_quota(uuid) FROM PUBLIC, anon, authenticated;
 
 GRANT EXECUTE ON FUNCTION public.initiate_chat_attachment(uuid, text, text, bigint, text, text) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.mark_chat_attachment_uploading(uuid) TO authenticated, service_role;
@@ -876,3 +876,6 @@ GRANT EXECUTE ON FUNCTION public.attachment_worker_set_quarantined(uuid, text, t
 GRANT EXECUTE ON FUNCTION public.attachment_worker_set_failed(uuid, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.tombstone_uploader_attachments(uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION public.attachment_release_quota(uuid) TO service_role;
+
+-- Config mutations: table grants already revoke write from anon/authenticated.
+-- No public/authenticated RPC exists to flip uploads_enabled / downloads_enabled.

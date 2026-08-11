@@ -41,34 +41,36 @@ DROP POLICY IF EXISTS chat_attachments_storage_restrict_select ON storage.object
 DROP POLICY IF EXISTS chat_attachments_storage_restrict_update ON storage.objects;
 DROP POLICY IF EXISTS chat_attachments_storage_restrict_delete ON storage.objects;
 
--- RESTRICTIVE: authenticated role cannot touch attachment buckets directly.
+-- RESTRICTIVE: anon/authenticated cannot touch attachment buckets directly.
 -- Service-role signed URLs bypass RLS. Existing permissive policies for other
 -- buckets continue to apply and are AND-ed with these restrictions.
+-- Policies are scoped via WITH CHECK/USING on attachment bucket ids only for
+-- the deny path; other buckets remain pass-through for the RESTRICTIVE clause.
 
 CREATE POLICY chat_attachments_storage_restrict_insert
-  AS RESTRICTIVE
   ON storage.objects
+  AS RESTRICTIVE
   FOR INSERT
-  TO authenticated
+  TO authenticated, anon
   WITH CHECK (bucket_id NOT IN ('chat-attachments', 'chat-attachments-quarantine'));
 
 CREATE POLICY chat_attachments_storage_restrict_select
-  AS RESTRICTIVE
   ON storage.objects
+  AS RESTRICTIVE
   FOR SELECT
-  TO authenticated
+  TO authenticated, anon
   USING (bucket_id NOT IN ('chat-attachments', 'chat-attachments-quarantine'));
 
 CREATE POLICY chat_attachments_storage_restrict_update
-  AS RESTRICTIVE
   ON storage.objects
+  AS RESTRICTIVE
   FOR UPDATE
-  TO authenticated
+  TO authenticated, anon
   USING (bucket_id NOT IN ('chat-attachments', 'chat-attachments-quarantine'));
 
 CREATE POLICY chat_attachments_storage_restrict_delete
-  AS RESTRICTIVE
   ON storage.objects
+  AS RESTRICTIVE
   FOR DELETE
-  TO authenticated
+  TO authenticated, anon
   USING (bucket_id NOT IN ('chat-attachments', 'chat-attachments-quarantine'));
