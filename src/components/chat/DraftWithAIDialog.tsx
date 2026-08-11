@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, Send, Loader2, Copy, Check, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -42,8 +42,6 @@ export const DraftWithAIDialog = ({
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const titleId = useId();
-  const helperId = useId();
 
   const resetLocalState = () => {
     abortRef.current?.abort();
@@ -152,19 +150,15 @@ export const DraftWithAIDialog = ({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent
-        className="sm:max-w-lg max-h-[80vh] flex flex-col"
-        aria-labelledby={titleId}
-        aria-describedby={helperId}
-      >
+      <DialogContent className="sm:max-w-lg max-h-[80vh] flex flex-col">
         <DialogHeader>
-          <DialogTitle id={titleId} className="flex items-center gap-2">
+          <DialogTitle className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-full brand-gradient flex items-center justify-center">
               <Sparkles className="w-4 h-4 text-primary-foreground" aria-hidden />
             </div>
             Draft with AI
           </DialogTitle>
-          <DialogDescription id={helperId}>
+          <DialogDescription>
             This tool uses only what you enter here. It does not read this conversation.
           </DialogDescription>
         </DialogHeader>
