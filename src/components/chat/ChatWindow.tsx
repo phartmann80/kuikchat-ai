@@ -50,9 +50,11 @@ import { MessageContextMenu } from "./MessageContextMenu";
 import { ScheduleMessageDialog, RepeatType } from "./ScheduleMessageDialog";
 import { ReplyBubble } from "./ReplyBubble";
 import { DraftWithAIDialog } from "./DraftWithAIDialog";
+import { AttachmentComposerControls } from "./AttachmentComposerControls";
 import { AIArtStudio } from "./AIArtStudio";
 import { MultimodalAICall } from "./MultimodalAICall";
 import { useToast } from "@/hooks/use-toast";
+import { bindAttachmentsToMessage } from "@/lib/attachments/client";
 import { EmojiPicker } from "./EmojiPicker";
 import { cn } from "@/lib/utils";
 import { resolveChatIdForMessaging } from "@/lib/resolveChatId";
@@ -130,8 +132,10 @@ export const ChatWindow = ({ chatId, contact, onBack, wallpaper = "transparent",
     markAsRead();
   }, [resolvedChatId, markAsRead]);
 
+  const [pendingAttachmentIds, setPendingAttachmentIds] = useState<string[]>([]);
+
   const handleSend = async () => {
-    if (!messageText.trim()) return;
+    if (!messageText.trim() && pendingAttachmentIds.length === 0) return;
     if (!resolvedChatId) {
       toast({
         title: "Chat unavailable",
@@ -140,7 +144,22 @@ export const ChatWindow = ({ chatId, contact, onBack, wallpaper = "transparent",
       });
       return;
     }
-    await sendMessage(messageText);
+    // Only bind attachments that are already available (clean). Never create a
+    // visible message referencing unavailable files.
+    const body = messageText.trim() || (pendingAttachmentIds.length > 0 ? "Attachment" : "");
+    const saved = await sendMessage(body);
+    if (saved?.id && pendingAttachmentIds.length > 0) {
+      try {
+        await bindAttachmentsToMessage(saved.id, pendingAttachmentIds);
+        setPendingAttachmentIds([]);
+      } catch {
+        toast({
+          title: "Attachment bind failed",
+          description: "Message sent, but files could not be linked. Try again.",
+          variant: "destructive",
+        });
+      }
+    }
     setMessageText("");
     setShowAttachments(false);
   };
@@ -557,6 +576,13 @@ ${imageUrl}`);
               </div>
             )}
           </AnimatePresence>
+
+          {resolvedChatId && (
+            <AttachmentComposerControls
+              chatId={resolvedChatId}
+              onAvailableChange={setPendingAttachmentIds}
+            />
+          )}
 
           <div className="flex items-center gap-2">
             <Button
