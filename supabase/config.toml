@@ -2,3 +2,6 @@ project_id = "fkvikwkmrlyhpjtaydln"
 
 [functions.ai-gateway]
 verify_jwt = false
+
+[functions.attachments]
+verify_jwt = false
