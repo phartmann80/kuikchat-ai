@@ -65,3 +65,25 @@ npm run preview    # Preview the build
 ## Status
 
 Prototype. It is a useful base for a polished chat product, but production use needs real provider secrets, Supabase policy review, and deployment checks.
+
+## Repository layout (multi-platform)
+
+The web prototype above is preserved unchanged. Production work toward the
+Android app happens in additive directories:
+
+- `mobile/` — Flutter Android client (Personal + Business environments,
+  Material 3 dark theme). See `mobile/README.md`.
+- `supabase-personal/` — migrations for the dedicated, isolated **Personal**
+  Supabase project (RLS on every table, private storage only). This is a
+  different project from the prototype's `supabase/`.
+- `docs/adr/` — architecture decision records
+  (start with `ADR-001-personal-business-isolation.md`).
+- `docs/personal-backend-contract.md` — the Personal service contract used
+  by the mobile client.
+- `.github/workflows/` — CI for the web build and the Flutter
+  analyze/test/build pipeline.
+
+Personal and Business are isolated by design: separate backend projects,
+separate repositories/interfaces in the client, separate navigation. Do not
+join or share tables across environments.
+

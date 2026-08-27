@@ -1,0 +1,25 @@
+name: Web CI
+
+on:
+  push:
+    branches: [main, "arena/**"]
+    paths-ignore:
+      - "mobile/**"
+      - "docs/**"
+  pull_request:
+    paths-ignore:
+      - "mobile/**"
+      - "docs/**"
+
+jobs:
+  build:
+    name: Build web app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
