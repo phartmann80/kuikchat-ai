@@ -226,7 +226,10 @@ create table public.messages (
   deleted_at      timestamptz,
   -- Disappearing messages: server-computed expiry, swept by scheduled job.
   expires_at      timestamptz,
-  unique (conversation_id, sender_id, client_id)
+  unique (conversation_id, sender_id, client_id),
+  -- Composite key target so read states can enforce that the referenced
+  -- message belongs to the same conversation (see message_read_states).
+  unique (conversation_id, id)
 );
 
 create index idx_messages_conversation_created
@@ -383,9 +386,13 @@ create policy "reactions: delete own"
 create table public.message_read_states (
   conversation_id      uuid not null references public.conversations (id) on delete cascade,
   user_id              uuid not null references public.profiles (user_id) on delete cascade,
-  last_read_message_id uuid not null references public.messages (id) on delete cascade,
+  last_read_message_id uuid not null,
   last_read_at         timestamptz not null default now(),
-  primary key (conversation_id, user_id)
+  primary key (conversation_id, user_id),
+  -- Integrity: the referenced message MUST belong to the same conversation.
+  -- A plain FK to messages(id) would allow cross-conversation read states.
+  foreign key (conversation_id, last_read_message_id)
+    references public.messages (conversation_id, id) on delete cascade
 );
 
 alter table public.message_read_states enable row level security;
@@ -401,10 +408,20 @@ create policy "read states: upsert own"
     and private.is_conversation_member(conversation_id, (select auth.uid()))
   );
 
+-- Both the existing row (USING) and the new row (WITH CHECK) must belong to
+-- the caller AND to a conversation the caller is currently a member of, so
+-- a read state can never be moved into a non-member conversation or
+-- reassigned to another user.
 create policy "read states: update own"
   on public.message_read_states for update to authenticated
-  using (user_id = (select auth.uid()))
-  with check (user_id = (select auth.uid()));
+  using (
+    user_id = (select auth.uid())
+    and private.is_conversation_member(conversation_id, (select auth.uid()))
+  )
+  with check (
+    user_id = (select auth.uid())
+    and private.is_conversation_member(conversation_id, (select auth.uid()))
+  );
 
 -- ---------------------------------------------------------------------------
 -- device sessions + encryption metadata

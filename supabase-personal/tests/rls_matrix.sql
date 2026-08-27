@@ -24,6 +24,8 @@
 --   10 Direct-call denial for private authorization helpers
 --      (is_blocked_between / is_conversation_member probing)
 --   11 Temp-schema (search_path) shadowing regression
+--   12 Read-state integrity (cross-conversation references, non-member
+--      moves, user reassignment)
 --   plus: message immutability, soft-delete, read states, reactions,
 --   attachments, device sessions.
 --
@@ -108,6 +110,8 @@ declare
   bob   constant uuid := '00000000-0000-4000-8000-00000000000b';
   carol constant uuid := '00000000-0000-4000-8000-00000000000c';
   conv  uuid;
+  conv2 uuid;
+  msg2  uuid;
   r     text;
   n     bigint;
   body_after text;
@@ -260,6 +264,56 @@ begin
   perform pg_temp.check_('8a A registers own device session', r = 'OK', r);
   n := pg_temp.count_as(bob, 'authenticated', 'select 1 from public.device_sessions');
   perform pg_temp.check_('8b B cannot see A sessions', n = 0, 'rows=' || n);
+
+  -- 12. read-state integrity hardening.
+  -- Second conversation (B <-> C) so a member of both conversations can try
+  -- to cross-wire read states between them.
+  r := pg_temp.exec_as(bob, 'authenticated',
+        format('select public.open_direct_conversation(%L)', carol));
+  perform pg_temp.check_('12x setup: B opens conversation with C', r = 'OK', r);
+  select id into conv2 from public.conversations
+   where direct_key = least(bob::text, carol::text) || ':' || greatest(bob::text, carol::text);
+  r := pg_temp.exec_as(bob, 'authenticated', format(
+    'insert into public.messages (conversation_id, sender_id, client_id, body) values (%L, %L, gen_random_uuid(), ''conv2 msg'')',
+    conv2, bob));
+  perform pg_temp.check_('12y setup: B sends message in conversation 2', r = 'OK', r);
+  select id into msg2 from public.messages where conversation_id = conv2 limit 1;
+
+  -- 12a member creates a read state for a message in the SAME conversation
+  r := pg_temp.exec_as(alice, 'authenticated', format(
+    'insert into public.message_read_states (conversation_id, user_id, last_read_message_id) values (%L, %L, %L)',
+    conv, alice, msg_id));
+  perform pg_temp.check_('12a member creates read state in same conversation', r = 'OK', r);
+
+  -- 12b member of BOTH conversations cannot point a read state at a message
+  -- from another conversation (composite FK)
+  r := pg_temp.exec_as(bob, 'authenticated', format(
+    'update public.message_read_states set last_read_message_id = %L where conversation_id = %L and user_id = %L',
+    msg2, conv, bob));
+  perform pg_temp.check_('12b read state cannot reference another conversation''s message',
+    r like 'ERR 23503%', r);
+
+  -- 12c member cannot move their read state into a non-member conversation
+  r := pg_temp.exec_as(alice, 'authenticated', format(
+    'update public.message_read_states set conversation_id = %L where conversation_id = %L and user_id = %L',
+    conv2, conv, alice));
+  perform pg_temp.check_('12c read state cannot move into a non-member conversation',
+    r like 'ERR%', r);
+
+  -- 12d non-member update attempt affects nothing (create denial is 4d)
+  r := pg_temp.exec_as(carol, 'authenticated', format(
+    'update public.message_read_states set last_read_message_id = %L where conversation_id = %L',
+    msg2, conv));
+  perform pg_temp.check_('12d non-member update touches zero rows',
+    (select count(*) from public.message_read_states
+      where conversation_id = conv and last_read_message_id = msg2) = 0, r);
+
+  -- 12e read state cannot be reassigned to another user
+  r := pg_temp.exec_as(bob, 'authenticated', format(
+    'update public.message_read_states set user_id = %L where conversation_id = %L and user_id = %L',
+    alice, conv, bob));
+  perform pg_temp.check_('12e read state cannot be reassigned to another user',
+    r like 'ERR%', r);
 
   -- 10. authorization helpers must not be probeable.
   -- 10a: helpers do not exist in the exposed (public) schema, so PostgREST

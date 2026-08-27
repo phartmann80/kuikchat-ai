@@ -20,6 +20,11 @@ on:
 env:
   FLUTTER_VERSION: "3.47.2"
 
+# Least privilege: read-only repo access; no workflow may write to the repo,
+# packages, or deployments. Artifact upload does not require write scopes.
+permissions:
+  contents: read
+
 jobs:
   flutter:
     name: Analyze, test, build APK

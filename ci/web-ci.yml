@@ -11,6 +11,10 @@ on:
       - "mobile/**"
       - "docs/**"
 
+# Least privilege: build-only workflow, read-only repository access.
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build web app

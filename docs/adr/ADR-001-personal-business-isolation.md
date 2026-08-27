@@ -71,7 +71,10 @@ Source-of-truth rules (no ambiguity permitted):
 
 Verification gate: `kuikchat-personal-prod` may not be created until
 migration 0001 applies cleanly to `kuikchat-personal-dev` AND
-`supabase-personal/tests/rls_matrix.sql` passes there.
+`supabase-personal/tests/rls_matrix.sql` passes there AND the Data API
+exposure check passes (`private` schema absent from the exposed-schema
+list, verified by `supabase-personal/tests/api_denial.sh` — the in-database
+checks alone cannot prove the deployed PostgREST configuration).
 
 ## Decision 3 — Authentication and session strategy
 
@@ -214,6 +217,9 @@ This ADR must be re-reviewed before any of the following:
 - Changing authentication providers or session storage
 - Adding a new storage bucket or making any bucket public (public buckets
   are currently forbidden)
+- Any change to the Supabase Data API settings (exposed schemas / extra
+  search path) — the `private`-schema-not-exposed gate must be re-verified
+  with `supabase-personal/tests/api_denial.sh`
 - Adding analytics or telemetry to the mobile client
 
 ## Capacity and performance

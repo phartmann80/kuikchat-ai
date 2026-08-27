@@ -30,6 +30,29 @@ RPC denial, storage path authorization, message immutability, soft delete,
 read states, reactions, attachments, and device sessions. It raises an
 exception if any check fails.
 
+## Data API exposure configuration (release gate)
+
+The security of the `private` authorization helpers depends on the deployed
+PostgREST configuration, not only on the schema name. Supabase can expose
+custom schemas through the Data API, so this MUST be verified per project:
+
+- Dashboard → Project Settings → Data API → **Exposed schemas** must contain
+  ONLY `public` (plus Supabase's managed `graphql_public` if enabled).
+  `private` must NEVER be added.
+- **Extra search path** must NOT include `private`.
+- Verify live with the API-level negative tests:
+
+```bash
+export PERSONAL_DEV_URL=...            # via approved secret channel
+export PERSONAL_DEV_ANON_KEY=...       # anon key only
+export TEST_USER_EMAIL=... TEST_USER_PASSWORD=...
+bash tests/api_denial.sh               # must end: ALL API DENIAL CHECKS PASSED
+```
+
+Release gate: `private schema is not exposed through the Personal Data API`.
+Re-verify after ANY change to Data API settings and before every production
+promotion.
+
 ## Rules
 
 - RLS on every table; no exceptions.
