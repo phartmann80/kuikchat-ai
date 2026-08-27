@@ -21,6 +21,9 @@
 --   6  Anonymous client attempting to call restricted RPCs
 --   7  User attempting to write another user's private storage path,
 --      non-member attempting to read/write conversation storage
+--   10 Direct-call denial for private authorization helpers
+--      (is_blocked_between / is_conversation_member probing)
+--   11 Temp-schema (search_path) shadowing regression
 --   plus: message immutability, soft-delete, read states, reactions,
 --   attachments, device sessions.
 --
@@ -257,6 +260,40 @@ begin
   perform pg_temp.check_('8a A registers own device session', r = 'OK', r);
   n := pg_temp.count_as(bob, 'authenticated', 'select 1 from public.device_sessions');
   perform pg_temp.check_('8b B cannot see A sessions', n = 0, 'rows=' || n);
+
+  -- 10. authorization helpers must not be probeable.
+  -- 10a: helpers do not exist in the exposed (public) schema, so PostgREST
+  --      cannot serve them to ANY client, authenticated included.
+  perform pg_temp.check_('10a helpers absent from public schema (no API surface)',
+    to_regprocedure('public.is_blocked_between(uuid,uuid)') is null
+    and to_regprocedure('public.is_conversation_member(uuid,uuid)') is null, '');
+  -- 10b/10c: anon has neither schema USAGE nor EXECUTE on private helpers.
+  r := pg_temp.exec_as(alice, 'anon',
+        format('select private.is_blocked_between(%L, %L)', alice, bob));
+  perform pg_temp.check_('10b anon cannot call is_blocked_between directly', r like 'ERR%', r);
+  r := pg_temp.exec_as(alice, 'anon',
+        format('select private.is_conversation_member(%L, %L)', conv, alice));
+  perform pg_temp.check_('10c anon cannot call is_conversation_member directly', r like 'ERR%', r);
+  -- 10d: authenticated keeps the minimal SQL-level EXECUTE required for RLS
+  --      policy evaluation (API-level denial is provided by 10a).
+  r := pg_temp.exec_as(alice, 'authenticated',
+        format('select private.is_conversation_member(%L, %L)', conv, alice));
+  perform pg_temp.check_('10d authenticated keeps minimal RLS-evaluation grant', r = 'OK', r);
+
+  -- 11. search-path shadowing regression: an attacker-created temp-schema
+  -- impostor must not influence policy evaluation. All SECURITY DEFINER
+  -- functions pin search_path = public, pg_temp and all policy references
+  -- are schema-qualified (private.*), so the shadow is inert.
+  r := pg_temp.exec_as(carol, 'authenticated',
+    'create function pg_temp.is_conversation_member(uuid, uuid) returns boolean language sql as ''select true''');
+  n := pg_temp.count_as(carol, 'authenticated',
+        format('select 1 from public.messages where conversation_id = %L', conv));
+  perform pg_temp.check_('11a temp-schema shadow does not grant read access',
+    n = 0, 'shadow_create=' || r || ' rows=' || n);
+  r := pg_temp.exec_as(carol, 'authenticated', format(
+    'insert into public.messages (conversation_id, sender_id, client_id, body) values (%L, %L, gen_random_uuid(), ''shadowed'')',
+    conv, carol));
+  perform pg_temp.check_('11b temp-schema shadow does not grant write access', r like 'ERR 42501%', r);
 
   -- 7 (storage). Policy-level checks against storage.objects.
   r := pg_temp.exec_as(alice, 'authenticated', format(

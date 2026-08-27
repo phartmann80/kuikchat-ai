@@ -43,15 +43,25 @@ Everything else is plain table access under RLS:
 ## Authorization rules (enforced server-side)
 
 1. Every user-owned table has RLS enabled; there are no policy-less tables.
-2. Membership checks go through `is_conversation_member()` (SECURITY
-   DEFINER) — every conversation operation is authorized per call.
+2. Membership checks go through `private.is_conversation_member()` and block
+   checks through `private.is_blocked_between()` — SECURITY DEFINER helpers
+   in the non-exposed `private` schema (PostgREST serves only `public`), so
+   clients cannot probe membership or block relationships by calling them
+   directly. `anon` has no access to the `private` schema; `authenticated`
+   holds only the minimal EXECUTE required for RLS policy evaluation.
+   Every conversation operation is authorized per call.
 3. Senders can only insert messages as themselves and only into
    conversations they are members of.
 4. Messages are immutable after insert except sender soft-deletion.
 5. Storage: `personal-media` is private; reads require conversation
    membership, writes require the uploader path prefix to match the caller.
 6. Realtime postgres_changes respects the same RLS policies.
-7. `anon` role has no execute rights on the RPC surface.
+7. `anon` role has no execute rights on the RPC surface (revoked from
+   `PUBLIC` and `anon` explicitly — PostgreSQL grants new functions to
+   PUBLIC by default). Trigger functions are revoked from all client roles.
+8. All SECURITY DEFINER functions pin `search_path = public, pg_temp` and
+   use schema-qualified references, closing temp-schema shadowing attacks
+   (regression-tested in the RLS matrix, tests 11a/11b).
 
 ## Client failure contract
 

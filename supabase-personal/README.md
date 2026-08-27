@@ -36,3 +36,9 @@ exception if any check fails.
 - No public storage buckets.
 - No service-role keys in any client or in this repository.
 - Schema changes only via reviewed SQL migrations in `migrations/`.
+- Internal authorization helpers live in the non-exposed `private` schema
+  (`private.is_blocked_between`, `private.is_conversation_member`); never
+  create authorization helpers in `public`, and never grant `anon` access
+  to `private`.
+- Every SECURITY DEFINER function pins `search_path = public, pg_temp` and
+  uses schema-qualified references.

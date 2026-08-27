@@ -13,6 +13,22 @@
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
+-- private schema: internal authorization helpers.
+--
+-- PostgREST exposes only the `public` schema, so functions in `private`
+-- have NO API surface. This prevents clients from probing block
+-- relationships or conversation membership by calling helpers directly.
+-- `authenticated` receives USAGE + per-function EXECUTE only because RLS
+-- policies evaluate these helpers with the querying user's privileges.
+-- ---------------------------------------------------------------------------
+create schema private;
+revoke all on schema private from public;
+grant usage on schema private to authenticated;
+grant usage on schema private to service_role;
+-- Future-proof: functions created in `private` later must opt IN to access.
+alter default privileges in schema private revoke execute on functions from public;
+
+-- ---------------------------------------------------------------------------
 -- profiles
 -- ---------------------------------------------------------------------------
 create table public.profiles (
@@ -50,7 +66,7 @@ create policy "profiles: update own"
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
-security definer set search_path = public
+security definer set search_path = public, pg_temp
 as $$
 begin
   insert into public.profiles (user_id, display_name)
@@ -65,6 +81,12 @@ $$;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
+
+-- Trigger-only: no role may call this via the API. EXECUTE was validated at
+-- trigger creation (as postgres); firing does not re-check the caller.
+-- supabase_auth_admin keeps EXECUTE as defense-in-depth for GoTrue.
+revoke execute on function public.handle_new_user() from public, anon, authenticated;
+grant execute on function public.handle_new_user() to supabase_auth_admin;
 
 -- ---------------------------------------------------------------------------
 -- contacts / blocked contacts
@@ -100,11 +122,11 @@ create policy "blocked: owner full access"
   using (blocker_id = (select auth.uid()))
   with check (blocker_id = (select auth.uid()));
 
-create or replace function public.is_blocked_between(a uuid, b uuid)
+create or replace function private.is_blocked_between(a uuid, b uuid)
 returns boolean
 language sql
 stable
-security definer set search_path = public
+security definer set search_path = public, pg_temp
 as $$
   select exists (
     select 1 from public.blocked_contacts
@@ -112,6 +134,11 @@ as $$
        or (blocker_id = b and blocked_id = a)
   );
 $$;
+
+-- Not part of the API surface (private schema); anon has no access at all;
+-- authenticated keeps the minimum EXECUTE needed for RLS policy evaluation.
+revoke execute on function private.is_blocked_between(uuid, uuid) from public, anon;
+grant execute on function private.is_blocked_between(uuid, uuid) to authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
 -- conversations + membership
@@ -141,12 +168,13 @@ alter table public.conversations enable row level security;
 alter table public.conversation_members enable row level security;
 
 -- SECURITY DEFINER membership check avoids recursive RLS between
--- conversations and conversation_members.
-create or replace function public.is_conversation_member(conv uuid, member uuid)
+-- conversations and conversation_members. Lives in the non-exposed
+-- `private` schema so it cannot be called through the API.
+create or replace function private.is_conversation_member(conv uuid, member uuid)
 returns boolean
 language sql
 stable
-security definer set search_path = public
+security definer set search_path = public, pg_temp
 as $$
   select exists (
     select 1 from public.conversation_members
@@ -154,16 +182,19 @@ as $$
   );
 $$;
 
+revoke execute on function private.is_conversation_member(uuid, uuid) from public, anon;
+grant execute on function private.is_conversation_member(uuid, uuid) to authenticated, service_role;
+
 create policy "conversations: members can read"
   on public.conversations for select to authenticated
-  using (public.is_conversation_member(id, (select auth.uid())));
+  using (private.is_conversation_member(id, (select auth.uid())));
 
 -- Creation happens exclusively through open_direct_conversation (below) so
 -- membership + block checks are atomic. No direct INSERT policy on purpose.
 
 create policy "members: members can read membership"
   on public.conversation_members for select to authenticated
-  using (public.is_conversation_member(conversation_id, (select auth.uid())));
+  using (private.is_conversation_member(conversation_id, (select auth.uid())));
 
 -- Deferred profile policy (needs conversation_members): profiles are visible
 -- to people you share a conversation with. No browsable directory exists.
@@ -205,20 +236,20 @@ alter table public.messages enable row level security;
 
 create policy "messages: members can read"
   on public.messages for select to authenticated
-  using (public.is_conversation_member(conversation_id, (select auth.uid())));
+  using (private.is_conversation_member(conversation_id, (select auth.uid())));
 
 create policy "messages: members can send as themselves"
   on public.messages for insert to authenticated
   with check (
     sender_id = (select auth.uid())
-    and public.is_conversation_member(conversation_id, (select auth.uid()))
+    and private.is_conversation_member(conversation_id, (select auth.uid()))
     -- Block enforcement: cannot send when any other member has a block
     -- relationship with the sender (direct conversations).
     and not exists (
       select 1 from public.conversation_members cm
       where cm.conversation_id = messages.conversation_id
         and cm.user_id <> (select auth.uid())
-        and public.is_blocked_between(cm.user_id, (select auth.uid()))
+        and private.is_blocked_between(cm.user_id, (select auth.uid()))
     )
   );
 
@@ -255,11 +286,13 @@ create trigger messages_immutability
   before update on public.messages
   for each row execute function public.enforce_message_immutability();
 
+revoke execute on function public.enforce_message_immutability() from public, anon, authenticated;
+
 -- Disappearing messages: stamp expiry from the conversation setting.
 create or replace function public.stamp_message_expiry()
 returns trigger
 language plpgsql
-security definer set search_path = public
+security definer set search_path = public, pg_temp
 as $$
 declare
   ttl integer;
@@ -276,6 +309,8 @@ $$;
 create trigger messages_stamp_expiry
   before insert on public.messages
   for each row execute function public.stamp_message_expiry();
+
+revoke execute on function public.stamp_message_expiry() from public, anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- attachments / reactions / read states
@@ -297,7 +332,7 @@ create policy "attachments: conversation members can read"
     exists (
       select 1 from public.messages m
       where m.id = message_id
-        and public.is_conversation_member(m.conversation_id, (select auth.uid()))
+        and private.is_conversation_member(m.conversation_id, (select auth.uid()))
     )
   );
 
@@ -326,7 +361,7 @@ create policy "reactions: members can read"
     exists (
       select 1 from public.messages m
       where m.id = message_id
-        and public.is_conversation_member(m.conversation_id, (select auth.uid()))
+        and private.is_conversation_member(m.conversation_id, (select auth.uid()))
     )
   );
 
@@ -337,7 +372,7 @@ create policy "reactions: members write own"
     and exists (
       select 1 from public.messages m
       where m.id = message_id
-        and public.is_conversation_member(m.conversation_id, (select auth.uid()))
+        and private.is_conversation_member(m.conversation_id, (select auth.uid()))
     )
   );
 
@@ -357,13 +392,13 @@ alter table public.message_read_states enable row level security;
 
 create policy "read states: members can read"
   on public.message_read_states for select to authenticated
-  using (public.is_conversation_member(conversation_id, (select auth.uid())));
+  using (private.is_conversation_member(conversation_id, (select auth.uid())));
 
 create policy "read states: upsert own"
   on public.message_read_states for insert to authenticated
   with check (
     user_id = (select auth.uid())
-    and public.is_conversation_member(conversation_id, (select auth.uid()))
+    and private.is_conversation_member(conversation_id, (select auth.uid()))
   );
 
 create policy "read states: update own"
@@ -436,13 +471,13 @@ create or replace function public.find_profile_by_email(lookup_email text)
 returns table (user_id uuid, display_name text, avatar_url text, about text)
 language sql
 stable
-security definer set search_path = public
+security definer set search_path = public, pg_temp
 as $$
   select p.user_id, p.display_name, p.avatar_url, p.about
   from public.profiles p
   join auth.users u on u.id = p.user_id
   where lower(u.email) = lower(trim(lookup_email))
-    and not public.is_blocked_between(p.user_id, (select auth.uid()))
+    and not private.is_blocked_between(p.user_id, (select auth.uid()))
   limit 1;
 $$;
 
@@ -454,7 +489,7 @@ grant execute on function public.find_profile_by_email(text) to authenticated;
 create or replace function public.open_direct_conversation(other_user uuid)
 returns json
 language plpgsql
-security definer set search_path = public
+security definer set search_path = public, pg_temp
 as $$
 declare
   self_id uuid := (select auth.uid());
@@ -470,7 +505,7 @@ begin
   if not exists (select 1 from public.profiles where user_id = other_user) then
     raise exception 'user not found' using errcode = 'P0002';
   end if;
-  if public.is_blocked_between(self_id, other_user) then
+  if private.is_blocked_between(self_id, other_user) then
     raise exception 'conversation not allowed' using errcode = '42501';
   end if;
 
@@ -519,7 +554,7 @@ create or replace function public.list_conversations()
 returns json
 language sql
 stable
-security definer set search_path = public
+security definer set search_path = public, pg_temp
 as $$
   select coalesce(json_agg(item order by item->>'last_message_at' desc nulls last), '[]'::json)
   from (
@@ -588,13 +623,13 @@ create policy "personal-media: members read"
   on storage.objects for select to authenticated
   using (
     bucket_id = 'personal-media'
-    and public.is_conversation_member(((storage.foldername(name))[1])::uuid, (select auth.uid()))
+    and private.is_conversation_member(((storage.foldername(name))[1])::uuid, (select auth.uid()))
   );
 
 create policy "personal-media: members upload own path"
   on storage.objects for insert to authenticated
   with check (
     bucket_id = 'personal-media'
-    and public.is_conversation_member(((storage.foldername(name))[1])::uuid, (select auth.uid()))
+    and private.is_conversation_member(((storage.foldername(name))[1])::uuid, (select auth.uid()))
     and (storage.foldername(name))[2] = (select auth.uid())::text
   );

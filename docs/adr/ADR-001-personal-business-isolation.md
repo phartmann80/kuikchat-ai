@@ -190,8 +190,9 @@ migration 0001 applies cleanly to `kuikchat-personal-dev` AND
   tables (`profiles`, `contacts`, `blocked_contacts`, `conversations`,
   `conversation_members`, `messages`, `message_attachments`,
   `message_reactions`, `message_read_states`, `device_sessions`,
-  `encryption_keys`), functions (`handle_new_user`, `is_blocked_between`,
-  `is_conversation_member`, `enforce_message_immutability`,
+  `encryption_keys`), the `private` schema with its helpers
+  (`private.is_blocked_between`, `private.is_conversation_member`),
+  public functions (`handle_new_user`, `enforce_message_immutability`,
   `stamp_message_expiry`, `find_profile_by_email`,
   `open_direct_conversation`, `list_conversations`), the trigger on
   `auth.users`, and the `personal-media` bucket. Because dev holds no real
