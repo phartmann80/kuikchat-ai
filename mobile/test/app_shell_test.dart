@@ -54,6 +54,24 @@ void main() {
     expect(find.text('Chats'), findsOneWidget);
   });
 
+  testWidgets('shell works on a narrow phone viewport (360x690)', (tester) async {
+    tester.view.physicalSize = const Size(360, 690);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(buildShell(FakePersonalConversationRepository()));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    // On narrow screens the switcher is icon-only; switch via tooltip.
+    expect(find.text('Business'), findsNothing);
+    await tester.tap(find.byTooltip('Business'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Customers'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('theme is dark with brand colors', (tester) async {
     final theme = KuikTheme.dark();
     expect(theme.brightness, Brightness.dark);

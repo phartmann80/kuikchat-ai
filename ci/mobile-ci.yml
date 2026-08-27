@@ -5,11 +5,20 @@ on:
     branches: [main, "arena/**"]
     paths:
       - "mobile/**"
+      - "supabase-personal/**"
+      - "tools/**"
       - ".github/workflows/mobile-ci.yml"
   pull_request:
     paths:
       - "mobile/**"
+      - "supabase-personal/**"
+      - "tools/**"
       - ".github/workflows/mobile-ci.yml"
+
+# Reproducibility: the Flutter version is PINNED (verified stable tag at the
+# time of pinning). Upgrades happen via explicit PR, never implicitly.
+env:
+  FLUTTER_VERSION: "3.47.2"
 
 jobs:
   flutter:
@@ -24,13 +33,38 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
-      - name: Flutter version
-        run: flutter --version
+      - name: Print pinned Flutter and Dart versions
+        run: |
+          flutter --version
+          dart --version
+
+      - name: Architecture boundary checks
+        run: bash ../tools/check_boundaries.sh
 
       - name: Pub get
         run: flutter pub get
+
+      - name: Lockfile status
+        # The lockfile must be committed for reproducible builds. Until the
+        # first successful CI run produces one, this uploads it as an
+        # artifact for a maintainer to commit; once committed, this step
+        # fails if pub get changed it (drift guard).
+        run: |
+          if git ls-files --error-unmatch pubspec.lock >/dev/null 2>&1; then
+            git diff --exit-code pubspec.lock \
+              || { echo "::error::pubspec.lock drifted from committed version"; exit 1; }
+          else
+            echo "::warning::pubspec.lock is not committed yet. Download the artifact from this run and commit it."
+          fi
+
+      - name: Upload pubspec.lock artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pubspec.lock
+          path: mobile/pubspec.lock
 
       - name: Analyze
         run: flutter analyze --no-fatal-infos
@@ -47,3 +81,27 @@ jobs:
           name: kuikchat-debug-apk
           path: mobile/build/app/outputs/flutter-apk/app-debug.apk
           retention-days: 7
+
+  sql-validation:
+    name: Validate Personal migrations (libpg_query)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Parse all Personal migrations with the PostgreSQL parser
+        run: |
+          npm install --no-save --no-audit --no-fund libpg-query
+          node tools/validate-sql.mjs supabase-personal/migrations
+
+  secret-scan:
+    name: Secret scanning (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

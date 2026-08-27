@@ -42,24 +42,36 @@ Cost accepted: a user with both roles has two accounts/sessions; any future
 cross-environment feature must go through an explicit server-side API, never
 a database join. We accept this deliberately.
 
-## Decision 2 — Database deployment model
+## Decision 2 — Database deployment model and environment naming
 
-Three Supabase projects total:
+Four isolated environments (plus the frozen prototype). Exact names:
 
-| Project | Purpose | Repo location |
-| --- | --- | --- |
-| `kuikchat-web-prototype` (existing) | current web app; frozen, to be migrated later | `supabase/` |
-| `kuikchat-personal-<env>` (new) | Personal environment (Android first) | `supabase-personal/` |
-| `kuikchat-business-<env>` (future) | Business environment | `supabase-business/` (not created yet) |
+| Environment | Supabase project | Status | Migrations source of truth |
+| --- | --- | --- | --- |
+| Personal development | `kuikchat-personal-dev` | **required for Milestone 1** — provisioning is the current blocker | `supabase-personal/migrations/` |
+| Personal production | `kuikchat-personal-prod` | NOT provisioned; only after dev migration + RLS matrix pass | `supabase-personal/migrations/` |
+| Business development | `kuikchat-business-dev` | later workstream; NOT provisioned | `supabase-business/migrations/` (directory does not exist yet — created when the Business workstream starts) |
+| Business production | `kuikchat-business-prod` | later workstream; NOT provisioned | `supabase-business/migrations/` |
+| Web prototype (existing) | current project | frozen; to be migrated later, nothing deleted | `supabase/migrations/` |
 
-Each project gets `dev` and `prod` instances (`<env>` suffix). Migrations are
-plain SQL under version control and applied only by CI or a release engineer
-via `supabase db push` against the linked project — never by hand in the
-dashboard.
+Source-of-truth rules (no ambiguity permitted):
 
-The existing web prototype keeps its current project. Migrating web users to
-the Personal project is a separate, later migration plan (out of scope here;
-nothing is deleted).
+- `supabase/` applies ONLY to the existing web prototype project. It must
+  never be applied to any Personal or Business project.
+- `supabase-personal/` applies ONLY to `kuikchat-personal-dev` and, after
+  acceptance, `kuikchat-personal-prod`.
+- Business projects will get their own directory, their own migrations,
+  their own storage buckets, their own realtime channels, and their own
+  policies. Business must NOT reuse Personal tables, migrations, repository
+  classes, or authorization policies — not even by copy-rename; it gets its
+  own reviewed contract.
+- Migrations are applied only by CI or a release engineer via
+  `supabase db push` against the explicitly linked project — never by hand
+  in the dashboard.
+
+Verification gate: `kuikchat-personal-prod` may not be created until
+migration 0001 applies cleanly to `kuikchat-personal-dev` AND
+`supabase-personal/tests/rls_matrix.sql` passes there.
 
 ## Decision 3 — Authentication and session strategy
 
@@ -168,6 +180,40 @@ nothing is deleted).
   history load. (Automatic gap-fill on reconnect is Milestone 2 work.)
 - Rollback of migration 0001: drop the created tables/functions/policies and
   the `personal-media` bucket; no other system references them yet.
+
+## Rollback procedure
+
+- **Client:** revert the offending commit(s) on the feature branch; the web
+  app is untouched by mobile changes (`mobile/` is additive). A broken
+  mobile build never affects web deployment.
+- **Migration 0001 (pre-production only):** drop the created objects —
+  tables (`profiles`, `contacts`, `blocked_contacts`, `conversations`,
+  `conversation_members`, `messages`, `message_attachments`,
+  `message_reactions`, `message_read_states`, `device_sessions`,
+  `encryption_keys`), functions (`handle_new_user`, `is_blocked_between`,
+  `is_conversation_member`, `enforce_message_immutability`,
+  `stamp_message_expiry`, `find_profile_by_email`,
+  `open_direct_conversation`, `list_conversations`), the trigger on
+  `auth.users`, and the `personal-media` bucket. Because dev holds no real
+  user data, dropping and re-applying is the approved rollback. Once
+  production data exists, rollbacks require forward-fix migrations plus the
+  backup/restore path above — destructive rollback is then forbidden.
+- **Configuration:** builds are pointed at a backend exclusively via
+  `--dart-define`; rolling back an environment repoint is a rebuild with the
+  previous values.
+
+## Review triggers
+
+This ADR must be re-reviewed before any of the following:
+
+- Provisioning any production project
+- Introducing the Business backend (new ADR required)
+- Any E2EE implementation work (new ADR required)
+- Adding cross-environment features of any kind
+- Changing authentication providers or session storage
+- Adding a new storage bucket or making any bucket public (public buckets
+  are currently forbidden)
+- Adding analytics or telemetry to the mobile client
 
 ## Capacity and performance
 

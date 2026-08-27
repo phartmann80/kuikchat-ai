@@ -10,13 +10,25 @@ tables here — the environments are isolated by design (see
 
 ## Applying
 
+Provision **development first** (`kuikchat-personal-dev`). Production must
+not be provisioned until the dev migration and the RLS matrix pass.
+
 ```bash
-# One-time: link this directory to the Personal project (dev or prod)
-supabase link --project-ref <PERSONAL_PROJECT_REF> --workdir supabase-personal
+# One-time: link this directory to the Personal DEV project
+supabase link --project-ref <PERSONAL_DEV_PROJECT_REF> --workdir supabase-personal
 
 # Apply migrations
 supabase db push --workdir supabase-personal
+
+# Run the authorization test matrix (self-cleaning; rolls back)
+psql "$PERSONAL_DEV_DB_URL" -f tests/rls_matrix.sql
 ```
+
+The matrix (`tests/rls_matrix.sql`) covers: own-record access, cross-user
+denial, shared vs non-member conversations, block enforcement, anonymous
+RPC denial, storage path authorization, message immutability, soft delete,
+read states, reactions, attachments, and device sessions. It raises an
+exception if any check fails.
 
 ## Rules
 

@@ -77,7 +77,12 @@ class _AppShellState extends ConsumerState<AppShell> {
                   : Theme.of(context).colorScheme.primary,
             ),
             const SizedBox(width: 8),
-            Text(isBusiness ? 'KuikChat Business' : 'KuikChat'),
+            Flexible(
+              child: Text(
+                isBusiness ? 'KuikChat Business' : 'KuikChat',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
           ],
         ),
         actions: [
@@ -85,6 +90,9 @@ class _AppShellState extends ConsumerState<AppShell> {
             padding: const EdgeInsets.only(right: 12),
             child: _PlatformSwitcher(
               scope: scope,
+              // Icon-only segments on narrow phones so the AppBar never
+              // overflows; labels appear from 400 dp upwards.
+              compact: MediaQuery.sizeOf(context).width < 400,
               onChanged: (next) => ref.read(platformScopeProvider.notifier).state = next,
             ),
           ),
@@ -128,10 +136,15 @@ class _Destination {
 }
 
 class _PlatformSwitcher extends StatelessWidget {
-  const _PlatformSwitcher({required this.scope, required this.onChanged});
+  const _PlatformSwitcher({
+    required this.scope,
+    required this.onChanged,
+    this.compact = false,
+  });
 
   final PlatformScope scope;
   final ValueChanged<PlatformScope> onChanged;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -141,16 +154,18 @@ class _PlatformSwitcher extends StatelessWidget {
         visualDensity: VisualDensity.compact,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
-      segments: const [
+      segments: [
         ButtonSegment(
           value: PlatformScope.personal,
-          icon: Icon(LucideIcons.user, size: 16),
-          label: Text('Personal'),
+          icon: const Icon(LucideIcons.user, size: 16),
+          label: compact ? null : const Text('Personal'),
+          tooltip: 'Personal',
         ),
         ButtonSegment(
           value: PlatformScope.business,
-          icon: Icon(LucideIcons.briefcase, size: 16),
-          label: Text('Business'),
+          icon: const Icon(LucideIcons.briefcase, size: 16),
+          label: compact ? null : const Text('Business'),
+          tooltip: 'Business',
         ),
       ],
       selected: {scope},

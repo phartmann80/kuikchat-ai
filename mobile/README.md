@@ -10,7 +10,8 @@ its screens state that honestly.
 
 ## Requirements
 
-- Flutter stable (3.24+; developed against current stable)
+- Flutter **3.47.2** (pinned; same version as CI — see `ci/mobile-ci.yml`.
+  Upgrades happen via explicit PR only)
 - Android SDK (API 34+ installed), a device or emulator
 - A provisioned Personal Supabase project
   (`supabase-personal/migrations/` applied)
@@ -61,9 +62,14 @@ Rules enforced by this layering:
 
 - Material 3, full dark theme, KuikChat blue (#3B82F6) / green (#22C55E).
 - Lucide icons only (`lucide_icons`); no emoji-style UI icons.
-- Responsive: bottom navigation on phones, navigation rail from 840 dp.
+- Responsive: bottom navigation on phones, navigation rail from 840 dp;
+  the platform switcher is icon-only below 400 dp.
 - Every screen implements loading / empty / error / offline / retry states.
   No placeholder conversations or fake data anywhere.
+- Settings honesty rule: no control may present local in-memory state as a
+  saved backend setting. Current sections: Account (live profile + backend
+  sign-out), Appearance (factual dark-only statement, no fake toggle),
+  About (real version + license page).
 
 ## Tests
 

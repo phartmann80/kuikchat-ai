@@ -10,5 +10,7 @@ git mv ci/mobile-ci.yml ci/web-ci.yml .github/workflows/
 git commit -m "Enable CI workflows"
 ```
 
-- `mobile-ci.yml` — Flutter: pub get, analyze, test, debug APK artifact.
+- `mobile-ci.yml` — Flutter (pinned 3.47.2): boundary checks, pub get,
+  lockfile drift guard + artifact, analyze, tests, debug APK; plus SQL
+  migration validation (libpg_query) and secret scanning (gitleaks) jobs.
 - `web-ci.yml` — Web: npm ci + vite build.

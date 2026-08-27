@@ -446,7 +446,8 @@ as $$
   limit 1;
 $$;
 
-revoke execute on function public.find_profile_by_email(text) from anon;
+revoke execute on function public.find_profile_by_email(text) from public, anon;
+grant execute on function public.find_profile_by_email(text) to authenticated;
 
 -- Atomically returns-or-creates the direct conversation between the caller
 -- and other_user, enforcing block lists.
@@ -510,7 +511,8 @@ begin
 end;
 $$;
 
-revoke execute on function public.open_direct_conversation(uuid) from anon;
+revoke execute on function public.open_direct_conversation(uuid) from public, anon;
+grant execute on function public.open_direct_conversation(uuid) to authenticated;
 
 -- Conversation list for the caller, newest activity first.
 create or replace function public.list_conversations()
@@ -562,7 +564,8 @@ as $$
   ) items;
 $$;
 
-revoke execute on function public.list_conversations() from anon;
+revoke execute on function public.list_conversations() from public, anon;
+grant execute on function public.list_conversations() to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Realtime
