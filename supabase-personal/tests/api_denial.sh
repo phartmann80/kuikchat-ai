@@ -35,13 +35,16 @@
 # ============================================================================
 set -u
 
-: "${PERSONAL_DEV_URL:?set PERSONAL_DEV_URL}"
-: "${PERSONAL_DEV_ANON_KEY:?set PERSONAL_DEV_ANON_KEY}"
-: "${TEST_USER_EMAIL:?set TEST_USER_EMAIL}"
-: "${TEST_USER_PASSWORD:?set TEST_USER_PASSWORD}"
-: "${TEST_NONMEMBER_EMAIL:?set TEST_NONMEMBER_EMAIL}"
-: "${TEST_NONMEMBER_PASSWORD:?set TEST_NONMEMBER_PASSWORD}"
-: "${TEST_MEDIA_OBJECT_PATH:?set TEST_MEDIA_OBJECT_PATH (see fixture setup in header)}"
+# Explicit configuration enforcement: missing configuration is a SETUP
+# failure -> exit 2 (never a security result).
+for required_var in PERSONAL_DEV_URL PERSONAL_DEV_ANON_KEY \
+    TEST_USER_EMAIL TEST_USER_PASSWORD \
+    TEST_NONMEMBER_EMAIL TEST_NONMEMBER_PASSWORD TEST_MEDIA_OBJECT_PATH; do
+  if [[ -z "${!required_var:-}" ]]; then
+    echo "FATAL: required environment variable $required_var is not set (see header for setup)."
+    exit 2
+  fi
+done
 
 BODY_FILE=$(mktemp) || exit 2
 CURL_ERR_FILE=$(mktemp) || exit 2
@@ -82,19 +85,41 @@ check() { # name expected-status-regex
   fi
 }
 
-check_body_absent() { # name needle  (body must NOT contain needle; any status)
+# Storage-list assertions fail CLOSED. Only documented authorization
+# outcomes are accepted; a server error (5xx) or unexpected status is a
+# FAILURE — it is never evidence that authorization works.
+# Accepted denial statuses for the deployed Storage API:
+STORAGE_DENIAL_STATUSES='400|401|403|404'
+
+check_list_denied() { # name protected-object-name
   local name="$1" needle="$2"
   if [[ "$HTTP_STATUS" == "CURL_ERROR" ]]; then
     echo "FAIL  $name — TRANSPORT ERROR (not a security pass): $(head -c 200 "$CURL_ERR_FILE")"
     fail=1; return
   fi
+  # Disclosure of the protected object is a HARD failure regardless of status.
   if grep -q -- "$needle" "$BODY_FILE"; then
-    echo "FAIL  $name — HARD FAILURE: response (HTTP $HTTP_STATUS) contains protected object"
+    echo "FAIL  $name — HARD FAILURE: response (HTTP $HTTP_STATUS) discloses protected object"
+    echo "      body: $(head -c 200 "$BODY_FILE")"
+    fail=1; return
+  fi
+  if [[ "$HTTP_STATUS" == "200" ]]; then
+    # 200 is acceptable only as a VALID, empty-of-fixture JSON list.
+    if python3 -c 'import sys, json; d = json.load(sys.stdin); sys.exit(0 if isinstance(d, list) else 1)' <"$BODY_FILE" 2>/dev/null; then
+      echo "PASS  $name (HTTP 200, valid list, object not disclosed)"
+      pass_count=$((pass_count + 1))
+    else
+      echo "FAIL  $name — HTTP 200 but body is not a valid JSON list"
+      echo "      body: $(head -c 200 "$BODY_FILE")"
+      fail=1
+    fi
+  elif [[ "$HTTP_STATUS" =~ ^($STORAGE_DENIAL_STATUSES)$ ]]; then
+    echo "PASS  $name (HTTP $HTTP_STATUS denial, object not disclosed)"
+    pass_count=$((pass_count + 1))
+  else
+    echo "FAIL  $name — unexpected HTTP $HTTP_STATUS (5xx/other is not authorization evidence)"
     echo "      body: $(head -c 200 "$BODY_FILE")"
     fail=1
-  else
-    echo "PASS  $name (HTTP $HTTP_STATUS, object not disclosed)"
-    pass_count=$((pass_count + 1))
   fi
 }
 
@@ -123,8 +148,8 @@ login() { # $1 email  $2 password -> sets LOGIN_JWT, LOGIN_UID; exits on failure
     # Print only the server's error description — never the raw response,
     # which could contain tokens.
     local err
-    err=$(printf '%s' "$resp" | json_field "d.get('error_description') or d.get('msg') or d.get('error') or 'unparseable auth response'")
-    echo "FATAL: sign-in failed or user id unparseable for $1: ${err:-unknown}"
+    err=$(printf '%s' "$resp" | json_field "d.get('error_description') or d.get('msg') or d.get('error')")
+    echo "FATAL: sign-in failed or user id unparseable for $1: ${err:-unparseable auth response}"
     echo "       The script refuses to continue with an invalid identity."
     exit 2
   fi
@@ -220,10 +245,29 @@ if [[ "$HTTP_STATUS" == "200" && "$(cat "$BODY_FILE")" == "[]" ]]; then
 else
   echo "FAIL  auth  -> cross-user session read — HTTP $HTTP_STATUS body $(head -c 120 "$BODY_FILE")"; fail=1
 fi
-# Cleanup (best effort; failure to clean is reported but not a security fail).
-if [[ -n "$SESSION_ID" ]]; then
-  http DELETE "$REST/device_sessions?id=eq.$SESSION_ID" "$USER_JWT"
-  [[ "$HTTP_STATUS" =~ ^20[04]$ ]] || echo "WARN  cleanup of test session returned HTTP $HTTP_STATUS"
+# Cleanup (non-blocking: failures are WARNED, never silent, and never count
+# as a security pass). SESSION_ID must be a valid UUID before the delete
+# request is constructed; transport and HTTP failures are reported
+# separately; tokens/raw responses are never printed; temp files remain
+# owned by the EXIT trap.
+if [[ "$SESSION_ID" =~ $UUID_RE ]]; then
+  if ! http DELETE "$REST/device_sessions?id=eq.$SESSION_ID" "$USER_JWT"; then
+    echo "WARN  cleanup request failed (transport): $(head -c 200 "$CURL_ERR_FILE")"
+  elif [[ ! "$HTTP_STATUS" =~ ^20(0|4)$ ]]; then
+    echo "WARN  cleanup returned HTTP $HTTP_STATUS"
+  fi
+  # Regression: the generated test session must be gone, or its survival
+  # must be explicitly reported.
+  if http GET "$REST/device_sessions?select=id&id=eq.$SESSION_ID" "$USER_JWT" \
+     && [[ "$HTTP_STATUS" == "200" && "$(cat "$BODY_FILE")" == "[]" ]]; then
+    echo "PASS  cleanup verified: test session removed"
+    pass_count=$((pass_count + 1))
+  else
+    echo "WARN  cleanup NOT verified — test session may remain (HTTP $HTTP_STATUS)."
+    echo "      Remove manually: device_sessions id=$SESSION_ID"
+  fi
+else
+  echo "WARN  no valid session id captured; delete skipped (creation may have failed above)"
 fi
 
 echo
@@ -264,10 +308,11 @@ http GET "$STORAGE/object/personal-media/$TEST_MEDIA_OBJECT_PATH" "$ANON"
 check "anon  -> known private object read denied" "400|401|403|404"
 echo "      recorded: HTTP $HTTP_STATUS, body: $(head -c 160 "$BODY_FILE")"
 # 7d. Anonymous list of the KNOWN prefix must not disclose the object.
-#     Any status is tolerated EXCEPT a body containing the object name.
+#     Fail-closed: only 200-with-valid-empty-list or documented 4xx denials
+#     are accepted; 5xx or disclosure is a failure.
 http POST "$STORAGE/object/list/personal-media" "$ANON" \
   -d "{\"prefix\":\"$OBJECT_PREFIX\",\"limit\":100}"
-check_body_absent "anon  -> list of known prefix does not disclose object" "$OBJECT_NAME"
+check_list_denied "anon  -> list of known prefix denied without disclosure" "$OBJECT_NAME"
 # 7e. Authenticated NON-MEMBER read of the known object must not return it.
 http GET "$STORAGE/object/personal-media/$TEST_MEDIA_OBJECT_PATH" "$NM_JWT"
 check "auth non-member -> known private object read denied" "400|401|403|404"
@@ -275,7 +320,7 @@ echo "      recorded: HTTP $HTTP_STATUS, body: $(head -c 160 "$BODY_FILE")"
 # 7f. Authenticated NON-MEMBER list must not disclose the object.
 http POST "$STORAGE/object/list/personal-media" "$NM_JWT" \
   -d "{\"prefix\":\"$OBJECT_PREFIX\",\"limit\":100}"
-check_body_absent "auth non-member -> list does not disclose object" "$OBJECT_NAME"
+check_list_denied "auth non-member -> list denied without disclosure" "$OBJECT_NAME"
 
 echo
 echo "== Evidence reminders (manual, attach to validation report) =="
