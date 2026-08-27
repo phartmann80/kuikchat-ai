@@ -9,6 +9,7 @@
 #   Invalid identity            -> exit 2
 #   Transport failure           -> exit 2 (during sign-in)
 #   Missing fixture             -> exit 2
+#   Owner cannot read fixture   -> exit 2 (distinct from missing fixture)
 #   Protected object disclosed  -> failure (exit 1, HARD FAILURE)
 #   Unexpected 5xx              -> failure (exit 1)
 #   Successful denial           -> pass   (exit 0)
@@ -25,10 +26,12 @@ cd "$(dirname "$0")" || exit 2
 BASE_PORT="${MOCK_BASE_PORT:-8971}"
 failures=0
 scenario_index=0
+scenarios_run=0
 
 run_case() { # scenario expected_exit required_pattern [forbidden_pattern]
   local scenario="$1" expected="$2" pattern="$3" forbidden="${4:-}"
   scenario_index=$((scenario_index + 1))
+  scenarios_run=$((scenarios_run + 1))
   local port=$((BASE_PORT + scenario_index))
 
   MOCK_SCENARIO="$scenario" python3 selftest/mock_api.py "$port" &
@@ -67,6 +70,7 @@ run_case() { # scenario expected_exit required_pattern [forbidden_pattern]
 }
 
 echo "== 1. Missing required environment variable -> setup failure, exit 2 =="
+scenarios_run=$((scenarios_run + 1))
 out=$(bash ./api_denial.sh 2>&1); rc=$?
 if [[ $rc -eq 2 ]] && grep -q "required environment variable" <<<"$out"; then
   echo "PASS  missing configuration aborts (exit 2)"
@@ -75,6 +79,7 @@ else
 fi
 
 echo "== 2. Unreachable host -> transport FATAL, exit 2, no credential output =="
+scenarios_run=$((scenarios_run + 1))
 out=$(PERSONAL_DEV_URL="https://unreachable.invalid" PERSONAL_DEV_ANON_KEY="anon-key-mock" \
       TEST_USER_EMAIL="a@selftest.local" TEST_USER_PASSWORD="mock-only" \
       TEST_NONMEMBER_EMAIL="c@selftest.local" TEST_NONMEMBER_PASSWORD="mock-only" \
@@ -89,15 +94,18 @@ echo "== 3. Mock-server scenarios =="
 run_case ok              0 "ALL API DENIAL CHECKS PASSED" "WARN"
 run_case bad_json        2 "unparseable auth response"
 run_case bad_uuid        2 "user id unparseable"
-run_case fixture_missing 2 "fixture missing"
+# Distinct fixture failures: missing object (404) vs. existing object the
+# owner cannot read (403). Both are setup failures, never security passes.
+run_case fixture_missing 2 "unreadable by its owner (HTTP 404)"
+run_case owner_forbidden 2 "unreadable by its owner (HTTP 403)"
 run_case list_500        1 "unexpected HTTP 500"
 run_case leak            1 "discloses protected object"
 run_case cleanup_500     0 "WARN  cleanup returned HTTP 500"
 
 echo
 if [[ $failures -eq 0 ]]; then
-  echo "SELFTEST PASSED (9 scenarios)"
+  echo "SELFTEST PASSED ($scenarios_run scenarios)"
   exit 0
 fi
-echo "SELFTEST FAILED ($failures scenario(s))"
+echo "SELFTEST FAILED ($failures of $scenarios_run scenario(s))"
 exit 1

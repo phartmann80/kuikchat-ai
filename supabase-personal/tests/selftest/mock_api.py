@@ -12,6 +12,7 @@ Scenarios:
   bad_json        auth endpoint returns unparseable body      -> expect exit 2
   bad_uuid        auth returns a non-UUID user id             -> expect exit 2
   fixture_missing owner read of fixture returns 404           -> expect exit 2
+  owner_forbidden fixture EXISTS but owner read returns 403   -> expect exit 2
   list_500        anonymous storage list returns 500          -> expect FAIL
   leak            anonymous storage list discloses fixture    -> expect HARD FAIL
   cleanup_500     session delete returns 500                  -> expect WARN, exit 0
@@ -101,6 +102,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if auth == "tok-a":
                 if SCEN == "fixture_missing":
                     return self._send(404, '{"error":"Object not found"}')
+                if SCEN == "owner_forbidden":
+                    # Object exists (list shows it) but the owner read is
+                    # denied — distinct failure from a missing fixture.
+                    return self._send(403, '{"error":"Unauthorized"}')
                 return self._send(200, "PNGDATA", "application/octet-stream")
             if anon:
                 return self._send(400, '{"error":"headers must have required property authorization"}')

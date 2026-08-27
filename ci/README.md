@@ -22,6 +22,13 @@ git commit -m "Enable CI workflows"
 - All third-party actions are pinned to immutable commit SHAs (the tag they
   correspond to is kept as a trailing comment).
 - The SQL validation dependency `libpg-query` is pinned to an exact version.
+- ShellCheck: the shell-lint job currently uses the runner-provided
+  ShellCheck on `ubuntu-latest` and prints its version as the first command
+  (the CI-printed version is the authoritative evidence). This is a
+  documented runner-version dependency requiring explicit approval before
+  final merge; the alternative is pinning a checksum-verified ShellCheck
+  release binary in the workflow — the maintainer enabling CI should record
+  which option is approved. Local preparation runs used ShellCheck 0.11.0.
 - Update process: a PR that (1) bumps the SHA/version, (2) states the tag it
   maps to and links the upstream release notes, and (3) is reviewed by the
   security workstream (Developer D). Never update a pin by editing a
