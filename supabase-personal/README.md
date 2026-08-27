@@ -43,11 +43,22 @@ custom schemas through the Data API, so this MUST be verified per project:
 - Verify live with the API-level negative tests:
 
 ```bash
-export PERSONAL_DEV_URL=...            # via approved secret channel
-export PERSONAL_DEV_ANON_KEY=...       # anon key only
-export TEST_USER_EMAIL=... TEST_USER_PASSWORD=...
-bash tests/api_denial.sh               # must end: ALL API DENIAL CHECKS PASSED
+# All via approved secret channel; anon key only, never service-role
+export PERSONAL_DEV_URL=... PERSONAL_DEV_ANON_KEY=...
+export TEST_USER_EMAIL=... TEST_USER_PASSWORD=...            # member/uploader
+export TEST_NONMEMBER_EMAIL=... TEST_NONMEMBER_PASSWORD=...  # NOT a member
+export TEST_MEDIA_OBJECT_PATH=<conv-uuid>/<userA-uuid>/fixture.png
+bash tests/api_denial.sh   # must end: ALL API DENIAL CHECKS PASSED
 ```
+
+The script requires a pre-created storage fixture (an object uploaded by
+the member user; setup steps are documented in the script header) and
+HARD-FAILS if the fixture is missing — a nonexistent path is never accepted
+as proof of storage privacy. Transport errors are reported as failures,
+never as passes. Credentials and tokens are never printed.
+
+Record the actual deployed Data API exposed-schema setting in the
+validation evidence (the script prints a reminder).
 
 Release gate: `private schema is not exposed through the Personal Data API`.
 Re-verify after ANY change to Data API settings and before every production

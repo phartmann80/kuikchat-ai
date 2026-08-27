@@ -5,10 +5,13 @@ Preconditions:
 - `kuikchat-personal-dev` provisioned, migration 0001 applied cleanly
 - `supabase-personal/tests/rls_matrix.sql` passed against it
 - **Data API exposure verified**: `private` schema absent from the exposed
-  schemas list, and `supabase-personal/tests/api_denial.sh` ends with
+  schemas list (record the actual deployed setting as evidence), and
+  `supabase-personal/tests/api_denial.sh` ends with
   `ALL API DENIAL CHECKS PASSED` (covers anon + authenticated helper-RPC
   denial, profile-header rejection, restricted RPC denial, empty
-  unauthenticated table reads, private storage denial)
+  unauthenticated table reads, real-UUID device-session ownership, and
+  fixture-based private storage read/list denial — requires the storage
+  fixture and non-member test account documented in the script header)
 - Debug build installed on a device/emulator, launched with
   `--dart-define=PERSONAL_SUPABASE_URL=... --dart-define=PERSONAL_SUPABASE_ANON_KEY=...`
   (anon key only, delivered via the approved secret channel — never chat,
