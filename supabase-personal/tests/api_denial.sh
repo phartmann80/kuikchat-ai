@@ -55,12 +55,11 @@ UUID_RE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F
 
 http() { # method url token [extra curl args...] -> sets HTTP_STATUS, body in BODY_FILE
   local method="$1" url="$2" token="$3"; shift 3
-  HTTP_STATUS=$(curl -sS -o "$BODY_FILE" -w '%{http_code}' -X "$method" "$url" \
+  if ! HTTP_STATUS=$(curl -sS -o "$BODY_FILE" -w '%{http_code}' -X "$method" "$url" \
     -H "apikey: $PERSONAL_DEV_ANON_KEY" \
     -H "Authorization: Bearer $token" \
     -H "Content-Type: application/json" \
-    "$@" 2>"$CURL_ERR_FILE")
-  if [[ $? -ne 0 ]]; then
+    "$@" 2>"$CURL_ERR_FILE"); then
     HTTP_STATUS="CURL_ERROR"
     return 1
   fi
@@ -112,10 +111,9 @@ except Exception:
 
 login() { # $1 email  $2 password -> sets LOGIN_JWT, LOGIN_UID; exits on failure
   local resp
-  resp=$(curl -sS -X POST "$PERSONAL_DEV_URL/auth/v1/token?grant_type=password" \
+  if ! resp=$(curl -sS -X POST "$PERSONAL_DEV_URL/auth/v1/token?grant_type=password" \
     -H "apikey: $PERSONAL_DEV_ANON_KEY" -H "Content-Type: application/json" \
-    -d "{\"email\":\"$1\",\"password\":\"$2\"}" 2>"$CURL_ERR_FILE")
-  if [[ $? -ne 0 ]]; then
+    -d "{\"email\":\"$1\",\"password\":\"$2\"}" 2>"$CURL_ERR_FILE"); then
     echo "FATAL: transport error during sign-in: $(head -c 200 "$CURL_ERR_FILE")"
     exit 2
   fi

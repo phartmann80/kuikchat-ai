@@ -87,6 +87,20 @@ jobs:
           path: mobile/build/app/outputs/flutter-apk/app-debug.apk
           retention-days: 7
 
+  shell-lint:
+    name: Shell lint (bash -n + ShellCheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: bash -n (syntax)
+        run: |
+          bash -n supabase-personal/tests/api_denial.sh
+          bash -n tools/check_boundaries.sh
+      - name: ShellCheck (security-sensitive scripts; merge-blocking)
+        run: |
+          shellcheck --version
+          shellcheck supabase-personal/tests/api_denial.sh tools/check_boundaries.sh
+
   sql-validation:
     name: Validate Personal migrations (libpg_query)
     runs-on: ubuntu-latest
