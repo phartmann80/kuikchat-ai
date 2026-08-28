@@ -202,13 +202,13 @@ check "anon  -> rpc/open_direct_conversation denied" "401|403|404"
 echo
 echo "== 4. Unauthenticated table access yields zero data =="
 http GET "$REST/messages?select=id&limit=5" "$ANON"
-if [[ "$HTTP_STATUS" == "200" && "$(cat "$BODY_FILE")" == "[]" ]]; then
+if [[ "$HTTP_STATUS" == "200" && "$(< "$BODY_FILE")" == "[]" ]]; then
   echo "PASS  anon  -> messages returns empty set (HTTP 200, [])"; pass_count=$((pass_count+1))
 else
   echo "FAIL  anon  -> messages — HTTP $HTTP_STATUS body $(head -c 120 "$BODY_FILE")"; fail=1
 fi
 http GET "$REST/profiles?select=user_id&limit=5" "$ANON"
-if [[ "$HTTP_STATUS" == "200" && "$(cat "$BODY_FILE")" == "[]" ]]; then
+if [[ "$HTTP_STATUS" == "200" && "$(< "$BODY_FILE")" == "[]" ]]; then
   echo "PASS  anon  -> profiles returns empty set (HTTP 200, [])"; pass_count=$((pass_count+1))
 else
   echo "FAIL  anon  -> profiles — HTTP $HTTP_STATUS body $(head -c 120 "$BODY_FILE")"; fail=1
@@ -224,23 +224,23 @@ http POST "$REST/device_sessions" "$USER_JWT" \
   -H "Prefer: return=representation" \
   -d "{\"user_id\":\"$USER_ID\",\"device_name\":\"api-denial-check\",\"platform\":\"android\"}"
 check "auth  -> owner can create own device session" "201"
-SESSION_ID=$(cat "$BODY_FILE" | json_field "(d[0] if isinstance(d, list) and d else {}).get('id')")
+SESSION_ID=$(json_field "(d[0] if isinstance(d, list) and d else {}).get('id')" < "$BODY_FILE")
 http GET "$REST/device_sessions?select=id&user_id=eq.$USER_ID&device_name=eq.api-denial-check" "$USER_JWT"
-if [[ "$HTTP_STATUS" == "200" && "$(cat "$BODY_FILE")" != "[]" ]]; then
+if [[ "$HTTP_STATUS" == "200" && "$(< "$BODY_FILE")" != "[]" ]]; then
   echo "PASS  auth  -> owner reads own session when one exists (HTTP 200, non-empty)"; pass_count=$((pass_count+1))
 else
   echo "FAIL  auth  -> owner cannot read own session — HTTP $HTTP_STATUS body $(head -c 120 "$BODY_FILE")"; fail=1
 fi
 # 5c. Foreign sessions with the REAL authenticated uuid: must be empty.
 http GET "$REST/device_sessions?select=user_id&user_id=neq.$USER_ID" "$USER_JWT"
-if [[ "$HTTP_STATUS" == "200" && "$(cat "$BODY_FILE")" == "[]" ]]; then
+if [[ "$HTTP_STATUS" == "200" && "$(< "$BODY_FILE")" == "[]" ]]; then
   echo "PASS  auth  -> foreign sessions (user_id=neq.$(redact "$USER_ID")) empty"; pass_count=$((pass_count+1))
 else
   echo "FAIL  auth  -> foreign sessions leak — HTTP $HTTP_STATUS body $(head -c 120 "$BODY_FILE")"; fail=1
 fi
 # 5d. The other authenticated account must not see A's session.
 http GET "$REST/device_sessions?select=user_id&user_id=eq.$USER_ID" "$NM_JWT"
-if [[ "$HTTP_STATUS" == "200" && "$(cat "$BODY_FILE")" == "[]" ]]; then
+if [[ "$HTTP_STATUS" == "200" && "$(< "$BODY_FILE")" == "[]" ]]; then
   echo "PASS  auth  -> another user cannot read A's device session (empty set)"; pass_count=$((pass_count+1))
 else
   echo "FAIL  auth  -> cross-user session read — HTTP $HTTP_STATUS body $(head -c 120 "$BODY_FILE")"; fail=1
@@ -259,7 +259,7 @@ if [[ "$SESSION_ID" =~ $UUID_RE ]]; then
   # Regression: the generated test session must be gone, or its survival
   # must be explicitly reported.
   if http GET "$REST/device_sessions?select=id&id=eq.$SESSION_ID" "$USER_JWT" \
-     && [[ "$HTTP_STATUS" == "200" && "$(cat "$BODY_FILE")" == "[]" ]]; then
+     && [[ "$HTTP_STATUS" == "200" && "$(< "$BODY_FILE")" == "[]" ]]; then
     echo "PASS  cleanup verified: test session removed"
     pass_count=$((pass_count + 1))
   else
@@ -273,7 +273,7 @@ fi
 echo
 echo "== 6. Cross-user profile access (no shared conversation) =="
 http GET "$REST/profiles?select=user_id&user_id=eq.$USER_ID" "$NM_JWT"
-if [[ "$HTTP_STATUS" == "200" && "$(cat "$BODY_FILE")" == "[]" ]]; then
+if [[ "$HTTP_STATUS" == "200" && "$(< "$BODY_FILE")" == "[]" ]]; then
   echo "PASS  auth  -> stranger cannot read A's profile (empty set)"; pass_count=$((pass_count+1))
 else
   echo "FAIL  auth  -> stranger profile read — HTTP $HTTP_STATUS body $(head -c 120 "$BODY_FILE")"; fail=1
