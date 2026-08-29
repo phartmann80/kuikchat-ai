@@ -1,0 +1,18 @@
+name: lucide_probe
+description: >
+  Disposable, isolated compatibility probe for lucide_icons_flutter 3.1.17
+  against the Flutter 3.47.2 toolchain. Verifies exact-version resolution and
+  that all 34 KuikChat icons resolve to IconData without any package-internal
+  IconData subclass. This is verification tooling, not production code.
+publish_to: none
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # Pinned exact. No caret range. If this exact version cannot be resolved,
+  # the probe job fails and the resolver output is reported; no other version
+  # is substituted silently.
+  lucide_icons_flutter: 3.1.17

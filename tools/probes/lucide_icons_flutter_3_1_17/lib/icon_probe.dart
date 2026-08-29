@@ -1,13 +1,18 @@
-// Isolated probe to verify lucide_icons_flutter 1.33.0 compatibility
-// with Flutter 3.47.2 and all 34 required icons.
+// Isolated verification probe for lucide_icons_flutter 3.1.17.
 //
-// This file is NOT production code. It is a verification probe only.
-// Run with: flutter analyze lucide_probe.dart
+// This is NOT production code. It exists only to prove, on the pinned
+// Flutter 3.47.2 toolchain, that:
+//   1. lucide_icons_flutter 3.1.17 resolves exactly.
+//   2. Every one of the 34 KuikChat icons is assignable to IconData.
+//   3. flutter analyze compiles all 34 symbols.
+//
+// Run with: flutter analyze lib/icon_probe.dart
+// (the CI job performs the full check sequence, including source inspection).
 
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-// 34 required icons for KuikChat
+// 34 required icons for KuikChat (matches the production usage).
 const requiredIcons = <IconData>[
   LucideIcons.alertCircle,
   LucideIcons.alertTriangle,
